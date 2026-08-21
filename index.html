@@ -536,8 +536,9 @@ function openPrecificar(pid){
   const bitolas=Array.isArray(p.pesos)?p.pesos:[];
   const pesoIni = pr?pr.peso : (bitolas[0]?.peso ?? '');
   const bitIni  = pr?pr.bitola : (bitolas[0]?.bitola ?? '');
-  const vd = pr?pr.variavel_distribuidor : (cfg.variavel_distribuidor_padrao||0);
-  const vp = pr?pr.variavel_provedor : (cfg.variavel_provedor_padrao||0);
+  const padrao = variaveisPorMateria(p.materia_prima);
+  const vd = pr?pr.variavel_distribuidor : (padrao.dist||0);
+  const vp = pr?pr.variavel_provedor : (padrao.prov||0);
   window._precCtx={pid, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18'};
   modal(`Precificar — ${esc(p.descricao)}`, `
     <div class="grid g3">
@@ -570,7 +571,7 @@ function openPrecificar(pid){
       <div class="fld"><label>Valor de venda — Provedor (editável)</label>
         <div class="inline-prefix"><span>R$</span><input id="p_rp" onkeyup="maskBRL(this);window._precCtx.valEditP=brNum(this.value);drawBreakdown()"></div></div>
     </div>
-    <div class="hint">Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
+    <div class="hint">Variáveis puxadas automaticamente da matéria prima <b>${p.materia_prima==='Aluminio'?'Alumínio':(p.materia_prima==='Aco'?'Aço':'—')}</b>. Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
     <div id="breakdown"></div>
   `, [
     {txt:'Cancelar',cls:'ghost',fn:closeModal},
@@ -685,21 +686,41 @@ function subVariaveis(){
   const c=S.config||{};
   $('#subview').innerHTML=`
     <div class="card">
-      <p style="margin:0 0 14px;color:var(--muted);font-size:13.5px">Valores padrão usados ao precificar um novo produto (R$ por kg).</p>
+      <p style="margin:0 0 16px;color:var(--muted);font-size:13.5px">Valores padrão usados ao precificar um novo produto (R$ por kg). O sistema puxa automaticamente o par conforme a <b>matéria prima</b> do produto (Aço ou Alumínio).</p>
+
+      <div style="display:flex;align-items:center;gap:8px;margin:2px 0 10px"><span class="tag aco">Aço</span></div>
       <div class="grid">
-        <div class="fld"><label>Distribuidor (R$/kg) → VARIÁVEL_DISTRIBUIDOR</label>
-          <div class="inline-prefix"><span>R$</span><input id="v_dist" value="${fmtN(c.variavel_distribuidor_padrao||0)}" onkeyup="maskBRL(this)"></div></div>
-        <div class="fld"><label>Provedor (R$/kg) → VARIÁVEL_PROVEDOR</label>
-          <div class="inline-prefix"><span>R$</span><input id="v_prov" value="${fmtN(c.variavel_provedor_padrao||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Distribuidor (R$/kg) → VARIÁVEL_DISTRIBUIDOR (Aço)</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_dist_aco" value="${fmtN(c.var_dist_aco||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Provedor (R$/kg) → VARIÁVEL_PROVEDOR (Aço)</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_prov_aco" value="${fmtN(c.var_prov_aco||0)}" onkeyup="maskBRL(this)"></div></div>
       </div>
-      <div style="margin-top:16px"><button class="btn sm" onclick="saveVariaveis()">Salvar variáveis</button></div>
+
+      <div style="display:flex;align-items:center;gap:8px;margin:22px 0 10px"><span class="tag alu">Alumínio</span></div>
+      <div class="grid">
+        <div class="fld"><label>Distribuidor (R$/kg) → VARIÁVEL_DISTRIBUIDOR (Alumínio)</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_dist_alu" value="${fmtN(c.var_dist_alu||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Provedor (R$/kg) → VARIÁVEL_PROVEDOR (Alumínio)</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_prov_alu" value="${fmtN(c.var_prov_alu||0)}" onkeyup="maskBRL(this)"></div></div>
+      </div>
+
+      <div style="margin-top:20px"><button class="btn sm" onclick="saveVariaveis()">Salvar variáveis</button></div>
     </div>`;
 }
 async function saveVariaveis(){
-  const rec={ variavel_distribuidor_padrao:brNum($('#v_dist').value), variavel_provedor_padrao:brNum($('#v_prov').value) };
+  const rec={
+    var_dist_aco:brNum($('#v_dist_aco').value), var_prov_aco:brNum($('#v_prov_aco').value),
+    var_dist_alu:brNum($('#v_dist_alu').value), var_prov_alu:brNum($('#v_prov_alu').value)
+  };
   const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
-  if(error){ toast('Erro ao salvar','err'); return; }
+  if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
   await loadConfig(); renderFormacao(); toast('Variáveis atualizadas','ok'); logAcao('config_variaveis');
+}
+// retorna o par de variáveis padrão conforme a matéria prima do produto
+function variaveisPorMateria(mp){
+  const c=S.config||{};
+  if(mp==='Aluminio') return {dist:c.var_dist_alu||0, prov:c.var_prov_alu||0};
+  return {dist:c.var_dist_aco||0, prov:c.var_prov_aco||0}; // Aço (padrão)
 }
 
 /* ============================================================
