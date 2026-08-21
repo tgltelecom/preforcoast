@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PreforCoast — Precificação de Alças Preformadas</title>
+
+<!-- ============================================================ -->
+<!--  Cliente Supabase                                             -->
+<!-- ============================================================ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+  :root{
+    --azul:#0d4f8b; --azul-2:#1567b8; --azul-claro:#e8f1fb;
+    --cinza:#f4f6f9; --borda:#d8dee6; --texto:#1c2733; --muted:#67727e;
+    --verde:#1a9b56; --vermelho:#d0433b; --amarelo:#d9a300;
+    --sombra:0 1px 3px rgba(16,32,53,.08),0 4px 16px rgba(16,32,53,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--cinza);color:var(--texto);font-size:14px}
+  button{font-family:inherit;cursor:pointer}
+  input,select{font-family:inherit;font-size:14px}
+  .hidden{display:none !important}
+
+  /* ---------- Login ---------- */
+  #login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+         background:linear-gradient(135deg,var(--azul) 0%,#083a68 100%)}
+  .login-card{background:#fff;border-radius:14px;padding:38px 34px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px}
+  .brand .logo{width:38px;height:38px;border-radius:9px;background:var(--azul);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800}
+  .brand h1{font-size:22px;margin:0;color:var(--azul);letter-spacing:-.5px}
+  .login-sub{text-align:center;color:var(--muted);font-size:12.5px;margin:0 0 22px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px}
+  .field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--borda);border-radius:8px;outline:none}
+  .field input:focus,.field select:focus{border-color:var(--azul-2);box-shadow:0 0 0 3px var(--azul-claro)}
+  .btn{background:var(--azul);color:#fff;border:none;padding:11px 16px;border-radius:8px;font-weight:600;width:100%}
+  .btn:hover{background:var(--azul-2)}
+  .btn.sec{background:#fff;color:var(--azul);border:1px solid var(--borda);width:auto;padding:8px 14px}
+  .btn.sec:hover{background:var(--azul-claro)}
+  .btn.sm{width:auto;padding:7px 12px;font-size:13px}
+  .btn.danger{background:var(--vermelho)}
+  .btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--borda);width:auto;padding:7px 12px}
+  .msg{font-size:12.5px;margin-top:10px;text-align:center;min-height:16px}
+  .msg.err{color:var(--vermelho)} .msg.ok{color:var(--verde)}
+
+  /* ---------- Shell ---------- */
+  #app{display:flex;flex-direction:column;min-height:100vh}
+  header.top{background:var(--azul);color:#fff;display:flex;align-items:center;padding:0 20px;height:56px;box-shadow:var(--sombra);position:sticky;top:0;z-index:20}
+  header .logo{width:30px;height:30px;border-radius:7px;background:#fff;color:var(--azul);display:flex;align-items:center;justify-content:center;font-weight:800;margin-right:9px}
+  header .title{font-weight:700;font-size:17px;letter-spacing:-.3px}
+  nav.menu{display:flex;gap:4px;margin-left:26px;flex:1}
+  nav.menu a{color:#cfe0f2;text-decoration:none;padding:8px 14px;border-radius:8px;font-weight:600;font-size:13.5px}
+  nav.menu a:hover{background:rgba(255,255,255,.12);color:#fff}
+  nav.menu a.active{background:#fff;color:var(--azul)}
+  .user-box{display:flex;align-items:center;gap:12px;font-size:13px}
+  .user-box .email{color:#dbe8f6}
+  main{padding:22px;max-width:1180px;margin:0 auto;width:100%}
+
+  .card{background:#fff;border:1px solid var(--borda);border-radius:12px;box-shadow:var(--sombra);padding:18px 20px;margin-bottom:18px}
+  .page-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+  .page-head h2{margin:0;font-size:20px;letter-spacing:-.4px}
+  .spacer{flex:1}
+  .search{position:relative}
+  .search input{padding:9px 12px 9px 34px;border:1px solid var(--borda);border-radius:8px;width:260px;outline:none}
+  .search input:focus{border-color:var(--azul-2);box-shadow:0 0 0 3px var(--azul-claro)}
+  .search .ic{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:10px 12px;border-bottom:2px solid var(--borda);white-space:nowrap}
+  td{padding:11px 12px;border-bottom:1px solid #eef1f5;vertical-align:middle}
+  tr:hover td{background:#fafbfd}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600}
+  .tag.aco{background:#eef1f5;color:#4a5560}
+  .tag.alu{background:var(--azul-claro);color:var(--azul)}
+  .tag.ok{background:#e4f6ec;color:var(--verde)}
+  .tag.no{background:#fdecea;color:var(--vermelho)}
+  .empty{text-align:center;color:var(--muted);padding:34px 0;font-size:13.5px}
+  .row-actions button{border:1px solid var(--borda);background:#fff;border-radius:7px;padding:5px 9px;margin-left:5px;color:var(--azul)}
+  .row-actions button:hover{background:var(--azul-claro)}
+  .row-actions button.del{color:var(--vermelho)}
+  .row-actions button.del:hover{background:#fdecea}
+
+  /* client type pills */
+  .pills{display:flex;gap:6px;flex-wrap:wrap}
+  .pill{padding:7px 13px;border:1px solid var(--borda);border-radius:20px;background:#fff;font-size:13px;font-weight:600;color:var(--muted)}
+  .pill.active{background:var(--azul);color:#fff;border-color:var(--azul)}
+
+  /* sub tabs */
+  .subtabs{display:flex;gap:4px;border-bottom:1px solid var(--borda);margin-bottom:18px}
+  .subtabs button{background:none;border:none;padding:11px 16px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .subtabs button.active{color:var(--azul);border-bottom-color:var(--azul)}
+
+  /* forms */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .grid.g3{grid-template-columns:repeat(3,1fr)}
+  .fld{display:flex;flex-direction:column;gap:5px}
+  .fld label{font-size:12px;font-weight:600;color:var(--muted)}
+  .fld .req{color:var(--vermelho)}
+  .fld input,.fld select{padding:9px 11px;border:1px solid var(--borda);border-radius:8px;outline:none;width:100%}
+  .fld input:focus,.fld select:focus{border-color:var(--azul-2);box-shadow:0 0 0 3px var(--azul-claro)}
+  .fld input[readonly]{background:#f4f6f9;color:#5b6672}
+  .auto-flag{font-size:10.5px;color:var(--verde);font-weight:700}
+  .auto-flag.warn{color:var(--amarelo)}
+  .inline-prefix{position:relative}
+  .inline-prefix span{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px}
+  .inline-prefix input{padding-left:32px}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(16,28,44,.5);display:flex;align-items:flex-start;justify-content:center;padding:34px 16px;z-index:50;overflow:auto}
+  .modal{background:#fff;border-radius:14px;width:100%;max-width:720px;box-shadow:0 24px 70px rgba(0,0,0,.35)}
+  .modal .m-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--borda)}
+  .modal .m-head h3{margin:0;font-size:17px}
+  .modal .m-body{padding:20px;max-height:70vh;overflow:auto}
+  .modal .m-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--borda)}
+  .x{margin-left:auto;background:none;border:none;font-size:20px;color:var(--muted);line-height:1}
+
+  /* peso mini table */
+  .pesos-tbl{width:100%;border:1px solid var(--borda);border-radius:8px;overflow:hidden;margin-top:6px}
+  .pesos-tbl .ph{display:grid;grid-template-columns:1fr 1fr 40px;background:var(--cinza);padding:7px 10px;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .pesos-tbl .pr{display:grid;grid-template-columns:1fr 1fr 40px;gap:8px;padding:7px 10px;align-items:center;border-top:1px solid #eef1f5}
+  .pesos-tbl .pr input{padding:7px 9px;border:1px solid var(--borda);border-radius:6px;width:100%}
+  .pesos-tbl .pr button{border:none;background:#fdecea;color:var(--vermelho);border-radius:6px;padding:6px}
+
+  .breakdown{background:var(--azul-claro);border:1px solid #cfe0f2;border-radius:10px;padding:14px 16px;margin-top:16px;font-size:13.5px;line-height:1.55}
+  .breakdown b{color:var(--azul)}
+  .breakdown .lin{display:flex;justify-content:space-between;padding:3px 0}
+  .breakdown .lin.total{border-top:1px dashed #a9c7e6;margin-top:6px;padding-top:8px;font-weight:700}
+
+  .stat{background:#fff;border:1px solid var(--borda);border-radius:10px;padding:14px 16px}
+  .stat .lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .stat .val{font-size:22px;font-weight:800;margin-top:4px;letter-spacing:-.5px}
+
+  .toast{position:fixed;bottom:22px;right:22px;background:var(--texto);color:#fff;padding:12px 18px;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:80;font-size:13.5px;opacity:0;transform:translateY(10px);transition:.25s}
+  .toast.show{opacity:1;transform:translateY(0)}
+  .toast.err{background:var(--vermelho)} .toast.ok{background:var(--verde)}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px}
+  @media(max-width:720px){.grid,.grid.g3{grid-template-columns:1fr}nav.menu{overflow:auto}}
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!--  TELA DE LOGIN                                                -->
+<!-- ============================================================ -->
+<div id="login">
+  <form class="login-card" onsubmit="return doLogin(event)">
+    <div class="brand"><div class="logo">PC</div><h1>PreforCoast</h1></div>
+    <p class="login-sub">Sistema de precificação de Alças Preformadas</p>
+    <div class="field"><label>E-mail</label><input id="loginEmail" type="email" autocomplete="username" required /></div>
+    <div class="field"><label>Senha</label><input id="loginPass" type="password" autocomplete="current-password" required /></div>
+    <button class="btn" type="submit" id="loginBtn">Entrar</button>
+    <div class="msg" id="loginMsg"></div>
+  </form>
+</div>
+
+<!-- ============================================================ -->
+<!--  APLICAÇÃO                                                    -->
+<!-- ============================================================ -->
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="logo">PC</div><div class="title">PreforCoast</div>
+    <nav class="menu">
+      <a href="#" data-sec="cadastros" onclick="go('cadastros',event)">Cadastros</a>
+      <a href="#" data-sec="tabela" onclick="go('tabela',event)">Tabela de Preço</a>
+      <a href="#" data-sec="formacao" onclick="go('formacao',event)">Formação de Preços</a>
+      <a href="#" data-sec="config" onclick="go('config',event)">Configurações</a>
+    </nav>
+    <div class="user-box">
+      <span class="email" id="userEmail"></span>
+      <button class="btn ghost" style="color:#fff;border-color:rgba(255,255,255,.4)" onclick="doLogout()">Sair</button>
+    </div>
+  </header>
+  <main id="view"></main>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   CONFIGURAÇÃO  —  PREENCHA COM OS DADOS DO SEU PROJETO SUPABASE
+   (Painel Supabase > Project Settings > API)
+   ============================================================ */
+const SUPABASE_URL      = "https://mgnhecuyuxqoquuukatx.supabase.co";      // ex: https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nbmhlY3V5dXhxb3F1dXVrYXR4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3MzI1ODEsImV4cCI6MjEwMjMwODU4MX0.mhGnLZ1aqsboD9V9l61h1oa6O0LsduPt7a9CX4AfMTA";   // chave "anon public"
+/* ============================================================ */
+
+let sb = null;
+if (window.supabase) sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ---------------- Estado ---------------- */
+const S = {
+  user:null, produtos:[], precos:{}, config:null,
+  clientType:'18', formSub:'precificar', search:{cadastros:'',tabela:'',precificar:''}
+};
+
+/* ---------------- Helpers ---------------- */
+const $  = (s,r=document)=>r.querySelector(s);
+const esc = t => (t==null?'':String(t)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function brNum(v){ // converte string BR ("1.234,56" ou "6,80") em número
+  if(v==null||v==='') return 0;
+  if(typeof v==='number') return v;
+  let s=String(v).trim().replace(/[^\d.,-]/g,'');
+  if(s.includes('.')&&s.includes(',')) s=s.replace(/\./g,'').replace(',','.');
+  else if(s.includes(',')) s=s.replace(',','.');
+  const n=parseFloat(s); return isNaN(n)?0:n;
+}
+const fmtBRL = n => (Number(n)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const fmtN   = (n,d=2)=> (Number(n)||0).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
+function maskBRL(el){ let v=el.value.replace(/\D/g,''); el.value=(parseInt(v||'0',10)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function toast(msg,type=''){ const t=$('#toast'); t.textContent=msg; t.className='toast show '+type; setTimeout(()=>t.className='toast',2600); }
+async function logAcao(acao,detalhe=''){ try{ await sb.from('logs').insert({user_email:S.user?.email,acao,detalhe}); }catch(e){} }
+
+/* ---------------- Parser de descrição ---------------- */
+const CORES=['BRANCO','PRETO','AZUL','VERMELHO','VERDE','AMARELO','LARANJA','MARROM','CINZA','ROSA','ROXO','VIOLETA','BEGE'];
+function parseDescricao(nome){
+  const s=(nome||'').toUpperCase();
+  const o={tipo:null,materia_prima:null,range_min:null,range_max:null,cor:null,comprimento:null,qtd_varetas:null,alertas:[]};
+  if(/AL[ÇC]A|ALCA/.test(s)) o.tipo='ALÇA PREFORMADA';
+  else if(/LA[ÇC]O/.test(s)) o.tipo='LAÇO PREFORMADO';
+  else if(/DERIVA/.test(s)) o.tipo='DERIVAÇÃO';
+  else if(/EMENDA/.test(s)) o.tipo='EMENDA';
+  else o.alertas.push('Tipo');
+  if(/AL\s+CABO\s+OPTICO/.test(s)) o.materia_prima='Aluminio';
+  else if(/AC\s+CCE/.test(s)) o.materia_prima='Aco';
+  else if(/\bAL\b/.test(s)) o.materia_prima='Aluminio';
+  else if(/\bAC\b/.test(s)) o.materia_prima='Aco';
+  else o.alertas.push('Matéria Prima');
+  const r=s.match(/(\d+[,.]\d+)\s*[-–]\s*(\d+[,.]\d+)\s*MM/);
+  if(r){ o.range_min=brNum(r[1]); o.range_max=brNum(r[2]); } else o.alertas.push('Range');
+  const semRange = r ? s.replace(r[0],' ') : s;
+  const c=semRange.match(/(\d{2,4})\s*MM/);
+  if(c) o.comprimento=parseInt(c[1],10); else o.alertas.push('Comprimento');
+  const v=s.match(/(\d+)\s*V\b/);
+  if(v) o.qtd_varetas=parseInt(v[1],10); else o.alertas.push('Varetas');
+  for(const cor of CORES){ if(new RegExp('\\b'+cor+'\\b').test(s)){ o.cor=cor; break; } }
+  if(!o.cor) o.alertas.push('Cor');
+  return o;
+}
+
+/* ============================================================
+   AUTENTICAÇÃO
+   ============================================================ */
+async function doLogin(e){
+  e.preventDefault();
+  const msg=$('#loginMsg'); const btn=$('#loginBtn');
+  msg.className='msg'; msg.textContent=''; btn.disabled=true; btn.textContent='Entrando...';
+  const email=$('#loginEmail').value.trim(), password=$('#loginPass').value;
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  btn.disabled=false; btn.textContent='Entrar';
+  if(error){ msg.className='msg err'; msg.textContent='Não foi possível entrar: '+error.message; return false; }
+  S.user=data.user; await startApp(); logAcao('login'); return false;
+}
+async function doLogout(){ await logAcao('logout'); await sb.auth.signOut(); location.reload(); }
+
+async function startApp(){
+  $('#login').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#userEmail').textContent=S.user.email;
+  await loadAll();
+  go('cadastros');
+}
+
+/* ============================================================
+   CARGA DE DADOS
+   ============================================================ */
+async function loadAll(){
+  await Promise.all([loadProdutos(), loadPrecos(), loadConfig()]);
+}
+async function loadProdutos(){
+  const {data,error}=await sb.from('produtos').select('*').order('descricao');
+  if(error){ toast('Erro ao carregar produtos','err'); return; }
+  S.produtos=data||[];
+}
+async function loadPrecos(){
+  const {data,error}=await sb.from('precificacoes').select('*');
+  if(error) return;
+  S.precos={}; (data||[]).forEach(p=>S.precos[p.produto_id]=p);
+}
+async function loadConfig(){
+  const {data}=await sb.from('configuracoes').select('*').eq('id',1).single();
+  S.config=data||{};
+}
+
+/* ============================================================
+   ROTEADOR
+   ============================================================ */
+function go(sec,e){
+  if(e) e.preventDefault();
+  document.querySelectorAll('nav.menu a').forEach(a=>a.classList.toggle('active',a.dataset.sec===sec));
+  if(sec==='cadastros') renderCadastros();
+  else if(sec==='tabela') renderTabela();
+  else if(sec==='formacao') renderFormacao();
+  else if(sec==='config') renderConfig();
+}
+
+/* ============================================================
+   TELA: CADASTROS
+   ============================================================ */
+function renderCadastros(){
+  const q=S.search.cadastros.toLowerCase();
+  const list=S.produtos.filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  $('#view').innerHTML=`
+    <div class="page-head">
+      <h2>Cadastro de Produtos</h2><div class="spacer"></div>
+      <div class="search"><span class="ic">🔍</span>
+        <input placeholder="Buscar produto..." value="${esc(S.search.cadastros)}"
+          oninput="S.search.cadastros=this.value;renderCadastros();this.focus()"></div>
+      <button class="btn sm" onclick="openProduto()">+ Novo produto</button>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Matéria Prima</th>
+          <th>Range (mm)</th><th>Cor</th><th class="num">Compr.</th><th class="num">Varetas</th><th class="num">Pesos</th><th></th></tr></thead>
+        <tbody>${ list.length ? list.map(rowProduto).join('') :
+          `<tr><td colspan="10"><div class="empty">Nenhum produto cadastrado ainda. Clique em <b>+ Novo produto</b>.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+function rowProduto(p){
+  const mp = p.materia_prima==='Aluminio'?'<span class="tag alu">Alumínio</span>':(p.materia_prima==='Aco'?'<span class="tag aco">Aço</span>':'—');
+  const range = (p.range_min!=null&&p.range_max!=null)?`${fmtN(p.range_min)} – ${fmtN(p.range_max)}`:'—';
+  const pesos = Array.isArray(p.pesos)?p.pesos.length:0;
+  return `<tr>
+    <td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td><td>${esc(p.tipo||'—')}</td>
+    <td>${mp}</td><td class="num">${range}</td><td>${esc(p.cor||'—')}</td>
+    <td class="num">${p.comprimento??'—'}</td><td class="num">${p.qtd_varetas??'—'}</td>
+    <td class="num">${pesos}</td>
+    <td class="row-actions" style="white-space:nowrap">
+      <button title="Editar" onclick="openProduto('${p.id}')">✏️</button>
+      <button class="del" title="Excluir" onclick="delProduto('${p.id}')">🗑️</button></td></tr>`;
+}
+
+/* ---- Modal de produto ---- */
+function openProduto(id){
+  const p = id ? S.produtos.find(x=>x.id===id) : null;
+  const pesos = p&&Array.isArray(p.pesos)?JSON.parse(JSON.stringify(p.pesos)):[];
+  window._pesos = pesos;
+  modal(`${p?'Editar':'Novo'} Produto`, `
+    <div class="grid">
+      <div class="fld"><label>Código <span class="req">*</span></label>
+        <input id="f_codigo" value="${esc(p?.codigo||'')}" oninput="reparse()"></div>
+      <div class="fld"><label>Descrição <span class="req">*</span></label>
+        <input id="f_descricao" value="${esc(p?.descricao||'')}" oninput="reparse()" placeholder="ex: ALCA PRF AC CCE 6,80 - 7,40mm BRANCO 3V 380mm"></div>
+    </div>
+    <div class="hint">Ao digitar a descrição, os campos abaixo são preenchidos automaticamente. Você pode ajustar qualquer um.</div>
+    <div id="autoAlert"></div>
+    <div class="grid g3" style="margin-top:12px">
+      <div class="fld"><label>Tipo <span id="fl_tipo" class="auto-flag"></span></label>
+        <select id="f_tipo">
+          ${['','ALÇA PREFORMADA','LAÇO PREFORMADO','DERIVAÇÃO','EMENDA'].map(t=>`<option ${p?.tipo===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+      <div class="fld"><label>Matéria Prima <span id="fl_mp" class="auto-flag"></span></label>
+        <select id="f_mp">
+          <option value="">—</option>
+          <option value="Aco" ${p?.materia_prima==='Aco'?'selected':''}>Aço</option>
+          <option value="Aluminio" ${p?.materia_prima==='Aluminio'?'selected':''}>Alumínio</option>
+        </select></div>
+      <div class="fld"><label>Cor da demarcação <span id="fl_cor" class="auto-flag"></span></label>
+        <input id="f_cor" value="${esc(p?.cor||'')}"></div>
+      <div class="fld"><label>Range mín (mm) <span id="fl_range" class="auto-flag"></span></label>
+        <input id="f_rmin" value="${p?.range_min!=null?fmtN(p.range_min):''}"></div>
+      <div class="fld"><label>Range máx (mm)</label>
+        <input id="f_rmax" value="${p?.range_max!=null?fmtN(p.range_max):''}"></div>
+      <div class="fld"><label>Comprimento (mm) <span id="fl_comp" class="auto-flag"></span></label>
+        <input id="f_comp" type="number" value="${p?.comprimento??''}"></div>
+      <div class="fld"><label>Qtde de varetas <span id="fl_var" class="auto-flag"></span></label>
+        <input id="f_var" type="number" value="${p?.qtd_varetas??''}"></div>
+    </div>
+    <div class="fld" style="margin-top:14px">
+      <label>Peso por bitola da matéria prima</label>
+      <div id="pesosBox"></div>
+      <button class="btn ghost" style="margin-top:8px" onclick="addPeso()">+ Adicionar bitola</button>
+    </div>
+  `, [
+    {txt:'Cancelar',cls:'ghost',fn:closeModal},
+    {txt: p?'Salvar alterações':'Cadastrar', cls:'', fn:()=>saveProduto(id)}
+  ]);
+  renderPesos(); reparse();
+}
+function reparse(){
+  const nome=($('#f_descricao')?.value||'')+' '+($('#f_codigo')?.value||'');
+  const o=parseDescricao(nome);
+  // só auto-preenche se ainda estiver vazio (não sobrescreve edição manual)
+  const auto=(elId,val,flagId)=>{ const el=$(elId),fl=$(flagId);
+    if(el && (el.value==='' ) && val!=null && val!==''){ el.value=val; if(fl){fl.textContent='auto';fl.className='auto-flag';} } };
+  auto('#f_tipo',o.tipo,'#fl_tipo');
+  auto('#f_mp',o.materia_prima,'#fl_mp');
+  auto('#f_cor',o.cor,'#fl_cor');
+  auto('#f_rmin',o.range_min!=null?fmtN(o.range_min):'','#fl_range');
+  auto('#f_rmax',o.range_max!=null?fmtN(o.range_max):'',null);
+  auto('#f_comp',o.comprimento,'#fl_comp');
+  auto('#f_var',o.qtd_varetas,'#fl_var');
+  const box=$('#autoAlert');
+  if(box){
+    if(o.alertas.length) box.innerHTML=`<div class="breakdown" style="background:#fff8e6;border-color:#f0dca0"><b style="color:${'#9a7400'}">⚠ Preencha manualmente:</b> ${o.alertas.join(', ')} — não foi possível identificar pela descrição.</div>`;
+    else box.innerHTML='';
+  }
+}
+function renderPesos(){
+  const box=$('#pesosBox'); if(!box) return;
+  box.innerHTML=`<div class="pesos-tbl"><div class="ph"><div>Bitola da MP</div><div>Peso (kg)</div><div></div></div>
+    ${window._pesos.map((r,i)=>`<div class="pr">
+      <input value="${esc(r.bitola||'')}" placeholder="ex: 1,80mm" oninput="window._pesos[${i}].bitola=this.value">
+      <input value="${r.peso!=null?String(r.peso).replace('.',','):''}" placeholder="ex: 0,420" oninput="window._pesos[${i}].peso=brNum(this.value)">
+      <button onclick="window._pesos.splice(${i},1);renderPesos()">✕</button></div>`).join('')||'<div class="pr" style="color:var(--muted);grid-template-columns:1fr">Nenhuma bitola. Adicione ao menos uma se já souber o peso.</div>'}
+  </div>`;
+}
+function addPeso(){ window._pesos.push({bitola:'',peso:null}); renderPesos(); }
+
+async function saveProduto(id){
+  const codigo=$('#f_codigo').value.trim(), descricao=$('#f_descricao').value.trim();
+  if(!codigo||!descricao){ toast('Código e Descrição são obrigatórios','err'); return; }
+  const rec={ codigo, descricao,
+    tipo:$('#f_tipo').value||null,
+    materia_prima:$('#f_mp').value||null,
+    cor:$('#f_cor').value.trim()||null,
+    range_min: $('#f_rmin').value?brNum($('#f_rmin').value):null,
+    range_max: $('#f_rmax').value?brNum($('#f_rmax').value):null,
+    comprimento: $('#f_comp').value?parseInt($('#f_comp').value,10):null,
+    qtd_varetas: $('#f_var').value?parseInt($('#f_var').value,10):null,
+    pesos: window._pesos.filter(r=>r.bitola||r.peso),
+    created_by:S.user.email
+  };
+  let error;
+  if(id){ ({error}=await sb.from('produtos').update(rec).eq('id',id)); }
+  else  { ({error}=await sb.from('produtos').insert(rec)); }
+  if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
+  await loadProdutos(); closeModal(); renderCadastros();
+  toast(id?'Produto atualizado':'Produto cadastrado','ok');
+  logAcao(id?'editar_produto':'novo_produto',descricao);
+}
+async function delProduto(id){
+  const p=S.produtos.find(x=>x.id===id);
+  confirmBox(`Excluir o produto <b>${esc(p?.descricao||'')}</b>? Isso também remove a precificação dele.`, async ()=>{
+    const {error}=await sb.from('produtos').delete().eq('id',id);
+    if(error){ toast('Erro ao excluir','err'); return; }
+    await loadProdutos(); await loadPrecos(); closeModal(); renderCadastros();
+    toast('Produto excluído','ok'); logAcao('excluir_produto',p?.descricao);
+  });
+}
+
+/* ============================================================
+   TELA: TABELA DE PREÇOS
+   ============================================================ */
+const CLIENTES=[
+  {k:'18',lbl:'ICMS 18%'},{k:'12',lbl:'ICMS 12%'},
+  {k:'7',lbl:'ICMS 7%'},{k:'simples',lbl:'Simples Nacional'}
+];
+function descontoCliente(k){
+  const c=S.config||{};
+  return {'18':c.desc_icms18,'12':c.desc_icms12,'7':c.desc_icms7,'simples':c.desc_simples}[k]||0;
+}
+function renderTabela(){
+  const q=S.search.tabela.toLowerCase();
+  const desc=descontoCliente(S.clientType)/100;
+  const list=S.produtos.filter(p=>S.precos[p.id]).filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  $('#view').innerHTML=`
+    <div class="page-head">
+      <h2>Tabela de Preços</h2><div class="spacer"></div>
+      <div class="search"><span class="ic">🔍</span>
+        <input placeholder="Buscar produto..." value="${esc(S.search.tabela)}"
+          oninput="S.search.tabela=this.value;renderTabela();this.focus()"></div>
+    </div>
+    <div class="card">
+      <label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:8px">Tipo de cliente</label>
+      <div class="pills">${CLIENTES.map(c=>`<button class="pill ${S.clientType===c.k?'active':''}" onclick="S.clientType='${c.k}';renderTabela()">${c.lbl}${(descontoCliente(c.k)>0)?` · -${fmtN(descontoCliente(c.k),1)}%`:''}</button>`).join('')}</div>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>Código</th><th>Descrição</th><th class="num">Peso (kg)</th>
+          <th class="num">Venda Distribuidor</th><th class="num">Venda Provedor</th></tr></thead>
+        <tbody>${ list.length ? list.map(p=>{
+          const pr=S.precos[p.id];
+          const vd=pr.valor_distribuidor*(1-desc), vp=pr.valor_provedor*(1-desc);
+          return `<tr><td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td>
+            <td class="num">${fmtN(pr.peso,3)}</td>
+            <td class="num">${fmtBRL(vd)}</td><td class="num">${fmtBRL(vp)}</td></tr>`;
+        }).join('') : `<tr><td colspan="5"><div class="empty">Nenhum produto precificado ainda. Vá em <b>Formação de Preços → Precificar</b>.</div></td></tr>`}</tbody>
+      </table>
+    </div>
+    ${desc>0?`<div class="hint">Preços exibidos já com desconto de ${fmtN(desc*100,1)}% para <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`:`<div class="hint">Valor cheio (sem desconto) — <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`}`;
+}
+
+/* ============================================================
+   TELA: FORMAÇÃO DE PREÇOS
+   ============================================================ */
+function renderFormacao(){
+  $('#view').innerHTML=`
+    <div class="page-head"><h2>Formação de Preços</h2></div>
+    <div class="subtabs">
+      <button class="${S.formSub==='precificar'?'active':''}" onclick="S.formSub='precificar';renderFormacao()">Precificar</button>
+      <button class="${S.formSub==='custos'?'active':''}" onclick="S.formSub='custos';renderFormacao()">Custos Fixos e Variáveis</button>
+      <button class="${S.formSub==='variaveis'?'active':''}" onclick="S.formSub='variaveis';renderFormacao()">Variáveis de Precificação</button>
+    </div>
+    <div id="subview"></div>`;
+  if(S.formSub==='precificar') subPrecificar();
+  else if(S.formSub==='custos') subCustos();
+  else subVariaveis();
+}
+
+function subPrecificar(){
+  const q=S.search.precificar.toLowerCase();
+  const list=S.produtos.filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  $('#subview').innerHTML=`
+    <div class="page-head">
+      <div class="search"><span class="ic">🔍</span>
+        <input placeholder="Buscar produto..." value="${esc(S.search.precificar)}"
+          oninput="S.search.precificar=this.value;subPrecificar();this.focus()"></div>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>Código</th><th>Descrição</th><th>Matéria Prima</th><th class="num">Peso (kg)</th>
+          <th class="num">Distribuidor</th><th class="num">Provedor</th><th>Status</th><th></th></tr></thead>
+        <tbody>${ list.length ? list.map(p=>{
+          const pr=S.precos[p.id];
+          const mp=p.materia_prima==='Aluminio'?'<span class="tag alu">Alumínio</span>':(p.materia_prima==='Aco'?'<span class="tag aco">Aço</span>':'—');
+          return `<tr>
+            <td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td><td>${mp}</td>
+            <td class="num">${pr?fmtN(pr.peso,3):'—'}</td>
+            <td class="num">${pr?fmtBRL(pr.valor_distribuidor):'—'}</td>
+            <td class="num">${pr?fmtBRL(pr.valor_provedor):'—'}</td>
+            <td>${pr?'<span class="tag ok">Precificado</span>':'<span class="tag no">Pendente</span>'}</td>
+            <td class="row-actions"><button title="${pr?'Editar':'Precificar'}" onclick="openPrecificar('${p.id}')">${pr?'✏️ Editar':'🏷️ Precificar'}</button></td></tr>`;
+        }).join('') : `<tr><td colspan="8"><div class="empty">Nenhum produto encontrado.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function openPrecificar(pid){
+  const p=S.produtos.find(x=>x.id===pid); const pr=S.precos[pid];
+  const cfg=S.config||{};
+  const bitolas=Array.isArray(p.pesos)?p.pesos:[];
+  const pesoIni = pr?pr.peso : (bitolas[0]?.peso ?? '');
+  const bitIni  = pr?pr.bitola : (bitolas[0]?.bitola ?? '');
+  const vd = pr?pr.variavel_distribuidor : (cfg.variavel_distribuidor_padrao||0);
+  const vp = pr?pr.variavel_provedor : (cfg.variavel_provedor_padrao||0);
+  window._precCtx={pid, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18'};
+  modal(`Precificar — ${esc(p.descricao)}`, `
+    <div class="grid g3">
+      <div class="fld"><label>Produto</label><input readonly value="${esc(p.descricao)}"></div>
+      <div class="fld"><label>Código</label><input readonly value="${esc(p.codigo)}"></div>
+      <div class="fld"><label>Matéria Prima</label><input readonly value="${p.materia_prima==='Aluminio'?'Alumínio':(p.materia_prima==='Aco'?'Aço':'—')}"></div>
+      <div class="fld"><label>Bitola da MP</label>
+        ${bitolas.length?`<select id="p_bit" onchange="onBitola()">
+            ${bitolas.map(b=>`<option value="${esc(b.bitola)}" data-peso="${b.peso}" ${b.bitola===bitIni?'selected':''}>${esc(b.bitola)}</option>`).join('')}
+            <option value="__nova__">+ Nova bitola...</option>
+          </select>`:`<input id="p_bit_txt" value="${esc(bitIni)}" placeholder="ex: 1,80mm">`}
+      </div>
+      <div class="fld"><label>Peso da alça (kg) <span class="req">*</span></label>
+        <input id="p_peso" value="${pesoIni!==''?String(pesoIni).replace('.',','):''}" placeholder="ex: 0,420" oninput="recalc()"></div>
+      <div class="fld"><label>ICMS / Regime (impostos)</label>
+        <select id="p_icms" onchange="recalc()">
+          <option value="18" ${window._precCtx.icms==='18'?'selected':''}>ICMS 18% (carga 27,25%)</option>
+          <option value="12" ${window._precCtx.icms==='12'?'selected':''}>ICMS 12% (carga 21,25%)</option>
+          <option value="7"  ${window._precCtx.icms==='7'?'selected':''}>ICMS 7% (carga 16,25%)</option>
+          <option value="simples" ${window._precCtx.icms==='simples'?'selected':''}>Simples Nacional (6%)</option>
+        </select></div>
+    </div>
+    <div class="grid" style="margin-top:6px">
+      <div class="fld"><label>Variável Distribuidor (R$/kg)</label>
+        <div class="inline-prefix"><span>R$</span><input id="p_vd" value="${fmtN(vd)}" onkeyup="maskBRL(this);recalc()"></div></div>
+      <div class="fld"><label>Variável Provedor (R$/kg)</label>
+        <div class="inline-prefix"><span>R$</span><input id="p_vp" value="${fmtN(vp)}" onkeyup="maskBRL(this);recalc()"></div></div>
+      <div class="fld"><label>Valor de venda — Distribuidor (editável)</label>
+        <div class="inline-prefix"><span>R$</span><input id="p_rd" onkeyup="maskBRL(this);window._precCtx.valEditD=brNum(this.value);drawBreakdown()"></div></div>
+      <div class="fld"><label>Valor de venda — Provedor (editável)</label>
+        <div class="inline-prefix"><span>R$</span><input id="p_rp" onkeyup="maskBRL(this);window._precCtx.valEditP=brNum(this.value);drawBreakdown()"></div></div>
+    </div>
+    <div class="hint">Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
+    <div id="breakdown"></div>
+  `, [
+    {txt:'Cancelar',cls:'ghost',fn:closeModal},
+    {txt:'Salvar precificação',cls:'',fn:()=>savePrecificacao(pid)}
+  ]);
+  recalc();
+}
+function onBitola(){
+  const sel=$('#p_bit'); if(!sel) return;
+  if(sel.value==='__nova__'){
+    const nome=prompt('Nova bitola (ex: 1,80mm):'); const peso=prompt('Peso para essa bitola (kg, ex: 0,420):');
+    if(nome){ window._precCtx.novaBitola={bitola:nome,peso:brNum(peso)};
+      const opt=document.createElement('option'); opt.value=nome; opt.dataset.peso=brNum(peso); opt.textContent=nome+' (nova)';
+      sel.insertBefore(opt, sel.lastElementChild); sel.value=nome; }
+    else sel.selectedIndex=0;
+  }
+  const o=sel.selectedOptions[0];
+  if(o&&o.dataset.peso) $('#p_peso').value=String(o.dataset.peso).replace('.',',');
+  recalc();
+}
+function currentPeso(){ return brNum($('#p_peso')?.value); }
+function recalc(){
+  const peso=currentPeso();
+  const vd=brNum($('#p_vd')?.value), vp=brNum($('#p_vp')?.value);
+  const rd=vd*peso, rp=vp*peso;
+  if(window._precCtx.valEditD==null){ $('#p_rd').value=fmtN(rd); window._precCtx.valEditD=rd; }
+  if(window._precCtx.valEditP==null){ $('#p_rp').value=fmtN(rp); window._precCtx.valEditP=rp; }
+  // se usuário não editou manualmente, acompanha o cálculo:
+  if(!$('#p_rd').dataset.touched){ $('#p_rd').value=fmtN(rd); window._precCtx.valEditD=rd; }
+  if(!$('#p_rp').dataset.touched){ $('#p_rp').value=fmtN(rp); window._precCtx.valEditP=rp; }
+  drawBreakdown();
+}
+const TAX={'18':0.2725,'12':0.2125,'7':0.1625,'simples':0.06};
+function drawBreakdown(){
+  const box=$('#breakdown'); if(!box) return;
+  const cfg=S.config||{};
+  const V=window._precCtx.valEditD||0; // rateio sobre o valor de distribuidor
+  const fat=Number(cfg.faturamento_mes)||0;
+  const frFixo = fat>0 ? (Number(cfg.custos_fixos)||0)/fat : 0;
+  const frVar  = fat>0 ? (Number(cfg.custos_variaveis)||0)/fat : 0;
+  const fidcPct=(Number(cfg.custo_fidc_pct)||0)/100;
+  const icms=$('#p_icms')?.value||'18';
+  const taxPct=TAX[icms];
+  const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vImp=V*taxPct;
+  const sobra=V-vFixo-vVar-vFidc-vImp;
+  const pname = S.produtos.find(x=>x.id===window._precCtx.pid)?.descricao||'';
+  box.innerHTML=`<div class="breakdown">
+    Conforme o faturamento de <b>${fmtBRL(fat)}</b>, o produto <b>${esc(pname)}</b> terá um valor de venda (distribuidor) de <b>${fmtBRL(V)}</b>, onde:
+    <div class="lin"><span>Custos fixos</span><span>${fmtBRL(vFixo)} <small style="color:var(--muted)">(${fmtN(frFixo*100,1)}%)</small></span></div>
+    <div class="lin"><span>Custos variáveis</span><span>${fmtBRL(vVar)} <small style="color:var(--muted)">(${fmtN(frVar*100,1)}%)</small></span></div>
+    <div class="lin"><span>Antecipação FIDC</span><span>${fmtBRL(vFidc)} <small style="color:var(--muted)">(${fmtN(fidcPct*100,1)}%)</small></span></div>
+    <div class="lin"><span>Impostos (${icms==='simples'?'Simples 6%':'ICMS '+icms+'%'})</span><span>${fmtBRL(vImp)} <small style="color:var(--muted)">(${fmtN(taxPct*100,2)}%)</small></span></div>
+    <div class="lin total"><span>Margem restante</span><span style="color:${sobra>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(sobra)}</span></div>
+    ${fat<=0?'<div class="hint" style="margin-top:8px">⚠ Defina o faturamento e custos na aba <b>Custos Fixos e Variáveis</b> para o rateio.</div>':''}
+  </div>`;
+}
+async function savePrecificacao(pid){
+  const peso=currentPeso();
+  if(!peso||peso<=0){ toast('Informe o peso da alça','err'); return; }
+  const p=S.produtos.find(x=>x.id===pid);
+  const bit = $('#p_bit') ? $('#p_bit').value : ($('#p_bit_txt')?.value||null);
+  const rec={ produto_id:pid, bitola: bit==='__nova__'?null:bit, peso,
+    variavel_distribuidor:brNum($('#p_vd').value), variavel_provedor:brNum($('#p_vp').value),
+    valor_distribuidor:brNum($('#p_rd').value), valor_provedor:brNum($('#p_rp').value),
+    icms_flag:$('#p_icms').value, updated_by:S.user.email };
+  // grava/atualiza bitola no cadastro do produto se for nova
+  let pesos=Array.isArray(p.pesos)?JSON.parse(JSON.stringify(p.pesos)):[];
+  if(bit && bit!=='__nova__'){
+    const ex=pesos.find(x=>x.bitola===bit);
+    if(ex) ex.peso=peso; else pesos.push({bitola:bit,peso});
+    await sb.from('produtos').update({pesos}).eq('id',pid);
+  }
+  const {error}=await sb.from('precificacoes').upsert(rec,{onConflict:'produto_id'});
+  if(error){ toast('Erro ao salvar precificação: '+error.message,'err'); return; }
+  await loadProdutos(); await loadPrecos(); closeModal(); renderFormacao();
+  toast('Precificação salva','ok'); logAcao('precificar',p.descricao);
+}
+
+/* ---- Sub-aba: Custos Fixos e Variáveis ---- */
+function subCustos(){
+  const c=S.config||{};
+  $('#subview').innerHTML=`
+    <div class="card">
+      <div class="grid">
+        <div class="fld"><label>Faturamento do mês</label>
+          <div class="inline-prefix"><span>R$</span><input id="c_fat" value="${fmtN(c.faturamento_mes||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Custos Fixos</label>
+          <div class="inline-prefix"><span>R$</span><input id="c_fix" value="${fmtN(c.custos_fixos||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Custos Variáveis</label>
+          <div class="inline-prefix"><span>R$</span><input id="c_var" value="${fmtN(c.custos_variaveis||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Custo FIDC (%)</label>
+          <input id="c_fidc" type="number" step="0.01" value="${c.custo_fidc_pct??0}"></div>
+      </div>
+      <div style="margin-top:16px"><button class="btn sm" onclick="saveCustos()">Salvar custos</button></div>
+    </div>
+    <div class="grid g3">
+      <div class="stat"><div class="lbl">% Custos fixos / faturamento</div><div class="val">${(c.faturamento_mes>0)?fmtN((c.custos_fixos/c.faturamento_mes)*100,1):'0,0'}%</div></div>
+      <div class="stat"><div class="lbl">% Custos variáveis / faturamento</div><div class="val">${(c.faturamento_mes>0)?fmtN((c.custos_variaveis/c.faturamento_mes)*100,1):'0,0'}%</div></div>
+      <div class="stat"><div class="lbl">FIDC</div><div class="val">${fmtN(c.custo_fidc_pct||0,2)}%</div></div>
+    </div>`;
+}
+async function saveCustos(){
+  const rec={ faturamento_mes:brNum($('#c_fat').value), custos_fixos:brNum($('#c_fix').value),
+    custos_variaveis:brNum($('#c_var').value), custo_fidc_pct:parseFloat($('#c_fidc').value)||0 };
+  const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
+  if(error){ toast('Erro ao salvar','err'); return; }
+  await loadConfig(); renderFormacao(); toast('Custos atualizados','ok'); logAcao('config_custos');
+}
+
+/* ---- Sub-aba: Variáveis de Precificação ---- */
+function subVariaveis(){
+  const c=S.config||{};
+  $('#subview').innerHTML=`
+    <div class="card">
+      <p style="margin:0 0 14px;color:var(--muted);font-size:13.5px">Valores padrão usados ao precificar um novo produto (R$ por kg).</p>
+      <div class="grid">
+        <div class="fld"><label>Distribuidor (R$/kg) → VARIÁVEL_DISTRIBUIDOR</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_dist" value="${fmtN(c.variavel_distribuidor_padrao||0)}" onkeyup="maskBRL(this)"></div></div>
+        <div class="fld"><label>Provedor (R$/kg) → VARIÁVEL_PROVEDOR</label>
+          <div class="inline-prefix"><span>R$</span><input id="v_prov" value="${fmtN(c.variavel_provedor_padrao||0)}" onkeyup="maskBRL(this)"></div></div>
+      </div>
+      <div style="margin-top:16px"><button class="btn sm" onclick="saveVariaveis()">Salvar variáveis</button></div>
+    </div>`;
+}
+async function saveVariaveis(){
+  const rec={ variavel_distribuidor_padrao:brNum($('#v_dist').value), variavel_provedor_padrao:brNum($('#v_prov').value) };
+  const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
+  if(error){ toast('Erro ao salvar','err'); return; }
+  await loadConfig(); renderFormacao(); toast('Variáveis atualizadas','ok'); logAcao('config_variaveis');
+}
+
+/* ============================================================
+   TELA: CONFIGURAÇÕES
+   ============================================================ */
+async function renderConfig(){
+  const c=S.config||{};
+  $('#view').innerHTML=`
+    <div class="page-head"><h2>Configurações</h2></div>
+    <div class="card">
+      <h3 style="margin:0 0 4px">Descontos por tipo de cliente</h3>
+      <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Desconto (%) aplicado sobre toda a Tabela de Preços. ICMS 18% normalmente fica em 0 (valor cheio).</p>
+      <div class="grid g3">
+        <div class="fld"><label>ICMS 18% (valor cheio)</label><input id="d18" type="number" step="0.01" value="${c.desc_icms18??0}"></div>
+        <div class="fld"><label>ICMS 12% — desconto %</label><input id="d12" type="number" step="0.01" value="${c.desc_icms12??0}"></div>
+        <div class="fld"><label>ICMS 7% — desconto %</label><input id="d7" type="number" step="0.01" value="${c.desc_icms7??0}"></div>
+        <div class="fld"><label>Simples Nacional — desconto %</label><input id="ds" type="number" step="0.01" value="${c.desc_simples??0}"></div>
+      </div>
+      <div style="margin-top:16px"><button class="btn sm" onclick="saveDescontos()">Salvar descontos</button></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center"><h3 style="margin:0">Usuários</h3><div class="spacer" style="flex:1"></div>
+        <button class="btn sm" onclick="openNovoUsuario()">+ Novo usuário</button></div>
+      <div id="usersBox" style="margin-top:12px"><div class="empty">Carregando...</div></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px">Log de atividades</h3>
+      <div id="logsBox"><div class="empty">Carregando...</div></div>
+    </div>`;
+  loadUsers(); loadLogs();
+}
+async function saveDescontos(){
+  const rec={ desc_icms18:parseFloat($('#d18').value)||0, desc_icms12:parseFloat($('#d12').value)||0,
+    desc_icms7:parseFloat($('#d7').value)||0, desc_simples:parseFloat($('#ds').value)||0 };
+  const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
+  if(error){ toast('Erro ao salvar','err'); return; }
+  await loadConfig(); toast('Descontos atualizados','ok'); logAcao('config_descontos');
+}
+async function loadUsers(){
+  const {data,error}=await sb.from('perfis').select('*').order('created_at');
+  const box=$('#usersBox'); if(!box) return;
+  if(error){ box.innerHTML=`<div class="empty">Não foi possível listar usuários.</div>`; return; }
+  box.innerHTML=`<table><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Desde</th></tr></thead>
+    <tbody>${(data||[]).map(u=>`<tr><td>${esc(u.nome||'—')}</td><td>${esc(u.email)}</td>
+      <td><span class="tag ${u.papel==='admin'?'alu':'aco'}">${esc(u.papel||'usuario')}</span></td>
+      <td>${new Date(u.created_at).toLocaleDateString('pt-BR')}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">Nenhum usuário.</div></td></tr>'}</tbody></table>`;
+}
+async function loadLogs(){
+  const {data}=await sb.from('logs').select('*').order('created_at',{ascending:false}).limit(60);
+  const box=$('#logsBox'); if(!box) return;
+  box.innerHTML=`<table><thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Detalhe</th></tr></thead>
+    <tbody>${(data||[]).map(l=>`<tr><td>${new Date(l.created_at).toLocaleString('pt-BR')}</td>
+      <td>${esc(l.user_email||'—')}</td><td>${esc(l.acao||'')}</td><td>${esc(l.detalhe||'')}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">Sem registros.</div></td></tr>'}</tbody></table>`;
+}
+function openNovoUsuario(){
+  modal('Novo usuário', `
+    <div class="grid">
+      <div class="fld"><label>Nome</label><input id="u_nome"></div>
+      <div class="fld"><label>E-mail <span class="req">*</span></label><input id="u_email" type="email"></div>
+      <div class="fld"><label>Senha <span class="req">*</span></label><input id="u_pass" type="password"></div>
+      <div class="fld"><label>Papel</label><select id="u_papel"><option value="usuario">Usuário</option><option value="admin">Admin</option></select></div>
+    </div>
+    <div class="hint">O usuário é criado no Supabase Auth. Se a confirmação de e-mail estiver ativada no projeto, ele precisará confirmar antes de entrar.</div>
+  `, [
+    {txt:'Cancelar',cls:'ghost',fn:closeModal},
+    {txt:'Criar usuário',cls:'',fn:criarUsuario}
+  ]);
+}
+async function criarUsuario(){
+  const nome=$('#u_nome').value.trim(), email=$('#u_email').value.trim(), password=$('#u_pass').value, papel=$('#u_papel').value;
+  if(!email||!password){ toast('E-mail e senha obrigatórios','err'); return; }
+  // cliente temporário para NÃO trocar a sessão do admin logado
+  const tmp=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {data,error}=await tmp.auth.signUp({email,password,options:{data:{nome}}});
+  if(error){ toast('Erro ao criar: '+error.message,'err'); return; }
+  // define papel no perfil (o gatilho já criou a linha)
+  if(data.user){ await sb.from('perfis').update({nome,papel}).eq('id',data.user.id); }
+  closeModal(); loadUsers(); toast('Usuário criado','ok'); logAcao('novo_usuario',email);
+}
+
+/* ============================================================
+   MODAL / CONFIRM
+   ============================================================ */
+function modal(titulo, body, botoes){
+  $('#modalRoot').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal"><div class="m-head"><h3>${esc(titulo)}</h3><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="m-body">${body}</div>
+    <div class="m-foot">${botoes.map((b,i)=>`<button class="btn ${b.cls} sm" id="mb_${i}">${esc(b.txt)}</button>`).join('')}</div>
+    </div></div>`;
+  botoes.forEach((b,i)=>$('#mb_'+i).onclick=b.fn);
+  // marca campos de valor final como "tocados" ao editar
+  ['p_rd','p_rp'].forEach(id=>{const el=$('#'+id); if(el) el.addEventListener('keyup',()=>el.dataset.touched='1');});
+}
+function closeModal(){ $('#modalRoot').innerHTML=''; }
+function confirmBox(html, onOk){
+  modal('Confirmar', `<div style="font-size:14.5px;line-height:1.5">${html}</div>`, [
+    {txt:'Cancelar',cls:'ghost',fn:closeModal},
+    {txt:'Confirmar',cls:'danger',fn:onOk}
+  ]);
+}
+
+/* ============================================================
+   INICIALIZAÇÃO — mantém sessão
+   ============================================================ */
+(async function init(){
+  if(!sb){
+    $('#loginMsg').className='msg err';
+    $('#loginMsg').textContent='Não foi possível carregar a biblioteca do Supabase. Verifique a conexão e recarregue.';
+    return;
+  }
+  if(SUPABASE_URL.startsWith('COLE_AQUI')){
+    $('#loginMsg').className='msg err';
+    $('#loginMsg').textContent='Configure SUPABASE_URL e SUPABASE_ANON_KEY no index.html.';
+  }
+  const {data}=await sb.auth.getSession();
+  if(data?.session){ S.user=data.session.user; await startApp(); }
+})();
+</script>
+</body>
+</html>
