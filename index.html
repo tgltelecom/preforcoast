@@ -268,7 +268,12 @@ async function startApp(){
    CARGA DE DADOS
    ============================================================ */
 async function loadAll(){
-  await Promise.all([loadProdutos(), loadPrecos(), loadConfig()]);
+  await Promise.all([loadProdutos(), loadPrecos(), loadConfig(), loadMP()]);
+}
+async function loadMP(){
+  const {data,error}=await sb.from('materia_prima_custos').select('*').order('material').order('bitola');
+  if(error){ S.mpcustos=[]; return; }
+  S.mpcustos=data||[];
 }
 async function loadProdutos(){
   const {data,error}=await sb.from('produtos').select('*').order('descricao');
@@ -495,11 +500,13 @@ function renderFormacao(){
       <button class="${S.formSub==='precificar'?'active':''}" onclick="S.formSub='precificar';renderFormacao()">Precificar</button>
       <button class="${S.formSub==='custos'?'active':''}" onclick="S.formSub='custos';renderFormacao()">Custos Fixos e Variáveis</button>
       <button class="${S.formSub==='variaveis'?'active':''}" onclick="S.formSub='variaveis';renderFormacao()">Variáveis de Precificação</button>
+      <button class="${S.formSub==='mp'?'active':''}" onclick="S.formSub='mp';renderFormacao()">Custo de Matéria-Prima</button>
     </div>
     <div id="subview"></div>`;
   if(S.formSub==='precificar') subPrecificar();
   else if(S.formSub==='custos') subCustos();
-  else subVariaveis();
+  else if(S.formSub==='variaveis') subVariaveis();
+  else subCustoMP();
 }
 
 function subPrecificar(){
@@ -617,7 +624,24 @@ function drawBreakdown(){
   const taxPct=TAX[icms];
   const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vImp=V*taxPct;
   const sobra=V-vFixo-vVar-vFidc-vImp;
-  const pname = S.produtos.find(x=>x.id===window._precCtx.pid)?.descricao||'';
+  const prod = S.produtos.find(x=>x.id===window._precCtx.pid);
+  const pname = prod?.descricao||'';
+  const bitSel = $('#p_bit') ? $('#p_bit').value : ($('#p_bit_txt')?.value||'');
+  const peso = brNum($('#p_peso')?.value);
+  const custoKg = custoKgMP(prod?.materia_prima, bitSel);
+  const custoMP = custoKg!=null ? custoKg*peso : null;
+  const lucro = custoMP!=null ? sobra - custoMP : null;
+  const lucroPct = (lucro!=null && V>0) ? (lucro/V*100) : null;
+  const matLbl = prod?.materia_prima==='Aluminio'?'Alumínio':(prod?.materia_prima==='Aco'?'Aço':'—');
+  let mpHtml;
+  if(custoKg!=null){
+    mpHtml=`
+    <div class="lin"><span>Valor do Kg da MP (líquido)</span><span>${fmtBRL(custoKg)}</span></div>
+    <div class="lin"><span>Valor de custo da MP (peso × kg)</span><span>${fmtBRL(custoMP)}</span></div>
+    <div class="lin total"><span>Lucro da operação</span><span style="color:${lucro>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucro)} <small style="color:var(--muted)">(${fmtN(lucroPct,1)}% sobre a venda)</small></span></div>`;
+  } else {
+    mpHtml=`<div class="hint" style="margin-top:8px">⚠ Cadastre o custo da bitola <b>${esc(bitSel||'—')}</b> (${matLbl}) na aba <b>Custo de Matéria-Prima</b> para ver o custo da MP e o lucro da operação.</div>`;
+  }
   box.innerHTML=`<div class="breakdown">
     Conforme o faturamento de <b>${fmtBRL(fat)}</b>, o produto <b>${esc(pname)}</b> terá um valor de venda (distribuidor) de <b>${fmtBRL(V)}</b>, onde:
     <div class="lin"><span>Custos fixos</span><span>${fmtBRL(vFixo)} <small style="color:var(--muted)">(${fmtN(frFixo*100,1)}%)</small></span></div>
@@ -625,6 +649,7 @@ function drawBreakdown(){
     <div class="lin"><span>Antecipação FIDC</span><span>${fmtBRL(vFidc)} <small style="color:var(--muted)">(${fmtN(fidcPct*100,1)}%)</small></span></div>
     <div class="lin"><span>Impostos (${icms==='simples'?'Simples 6%':'ICMS '+icms+'%'})</span><span>${fmtBRL(vImp)} <small style="color:var(--muted)">(${fmtN(taxPct*100,2)}%)</small></span></div>
     <div class="lin total"><span>Margem restante</span><span style="color:${sobra>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(sobra)}</span></div>
+    ${mpHtml}
     ${fat<=0?'<div class="hint" style="margin-top:8px">⚠ Defina o faturamento e custos na aba <b>Custos Fixos e Variáveis</b> para o rateio.</div>':''}
   </div>`;
 }
@@ -721,6 +746,100 @@ function variaveisPorMateria(mp){
   const c=S.config||{};
   if(mp==='Aluminio') return {dist:c.var_dist_alu||0, prov:c.var_prov_alu||0};
   return {dist:c.var_dist_aco||0, prov:c.var_prov_aco||0}; // Aço (padrão)
+}
+// ---- Custo de Matéria-Prima ----
+const MP_IMPOSTOS=[['icms','ICMS'],['ipi','IPI'],['pis','PIS'],['cofins','COFINS']];
+function mpCustoLiquido(r){
+  const b=brNum(r.preco_bruto); let cred=0, cost=0;
+  MP_IMPOSTOS.forEach(([k])=>{ const pct=(Number(r[k+'_pct'])||0)/100; if(r[k+'_credita']) cred+=pct; else cost+=pct; });
+  return b*(1-cred+cost);
+}
+function normBit(s){ return String(s||'').toLowerCase().replace(/mm/g,'').replace(/\s/g,'').replace('.',',').trim(); }
+function custoKgMP(material, bitola){
+  const nb=normBit(bitola);
+  const row=(S.mpcustos||[]).find(r=>r.material===material && normBit(r.bitola)===nb);
+  return row? mpCustoLiquido(row) : null;
+}
+
+/* ---- Sub-aba: Custo de Matéria-Prima ---- */
+function novaLinhaMP(material){ return {id:null, material, bitola:'', preco_bruto:0,
+  icms_pct:0, icms_credita:true, ipi_pct:0, ipi_credita:false, pis_pct:0, pis_credita:true, cofins_pct:0, cofins_credita:true, _novo:true}; }
+function subCustoMP(){
+  // carrega cópia editável
+  window._mpEdit = (S.mpcustos||[]).map(r=>JSON.parse(JSON.stringify(r)));
+  window._mpRemovidos = [];
+  renderMP();
+}
+function renderMP(){
+  $('#subview').innerHTML=`
+    <div class="card">
+      <p style="margin:0 0 4px;color:var(--muted);font-size:13.5px">Cadastre o preço de compra (R$/kg) por <b>bitola</b> de cada matéria-prima e os impostos de compra. Em cada imposto escolha <b>Creditar</b> (desconta do custo) ou <b>Incorporar</b> (soma ao custo). O <b>custo líquido</b> é usado no cálculo do lucro na precificação.</p>
+      <div class="hint" style="margin-bottom:14px">Custo líquido = Preço bruto − (impostos que creditam) + (impostos que incorporam).</div>
+      ${blocoMP('Aco','Aço')}
+      ${blocoMP('Aluminio','Alumínio')}
+      <div style="margin-top:18px"><button class="btn sm" onclick="saveMP()">Salvar custos de MP</button></div>
+    </div>`;
+}
+function blocoMP(mat, label){
+  const linhas=window._mpEdit.filter(r=>r.material===mat);
+  const tagc = mat==='Aluminio'?'alu':'aco';
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px"><span class="tag ${tagc}">${label}</span></div>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>Bitola</th><th class="num">Preço bruto (R$/kg)</th>
+        <th>ICMS</th><th>IPI</th><th>PIS</th><th>COFINS</th>
+        <th class="num">Custo líq. (R$/kg)</th><th></th>
+      </tr></thead>
+      <tbody>
+      ${linhas.length? linhas.map(r=>linhaMP(r)).join('') : `<tr><td colspan="8"><div class="empty">Nenhuma bitola de ${label}. Adicione abaixo.</div></td></tr>`}
+      </tbody>
+    </table>
+    </div>
+    <button class="btn ghost" style="margin-top:8px" onclick="addMP('${mat}')">+ Adicionar bitola de ${label}</button>`;
+}
+function impostoCell(r, k){
+  const idx=window._mpEdit.indexOf(r);
+  return `<div style="display:flex;flex-direction:column;gap:4px;min-width:118px">
+    <div class="inline-prefix"><input style="padding-left:9px" value="${r[k+'_pct']!=null?String(r[k+'_pct']).replace('.',','):''}" placeholder="%" oninput="window._mpEdit[${idx}]['${k}_pct']=brNum(this.value);mpRecalcLinha(${idx})">
+    </div>
+    <select style="padding:5px 6px;border:1px solid var(--borda);border-radius:6px;font-size:12px" onchange="window._mpEdit[${idx}]['${k}_credita']=(this.value==='1');mpRecalcLinha(${idx})">
+      <option value="1" ${r[k+'_credita']?'selected':''}>Creditar (−)</option>
+      <option value="0" ${!r[k+'_credita']?'selected':''}>Incorporar (+)</option>
+    </select></div>`;
+}
+function linhaMP(r){
+  const idx=window._mpEdit.indexOf(r);
+  return `<tr>
+    <td><input value="${esc(r.bitola||'')}" placeholder="ex: 1,68mm" style="padding:7px 9px;border:1px solid var(--borda);border-radius:6px;width:100px" oninput="window._mpEdit[${idx}].bitola=this.value"></td>
+    <td class="num"><div class="inline-prefix" style="max-width:130px"><span>R$</span><input value="${fmtN(r.preco_bruto||0)}" onkeyup="maskBRL(this);window._mpEdit[${idx}].preco_bruto=brNum(this.value);mpRecalcLinha(${idx})" style="padding-left:30px;width:130px"></div></td>
+    <td>${impostoCell(r,'icms')}</td>
+    <td>${impostoCell(r,'ipi')}</td>
+    <td>${impostoCell(r,'pis')}</td>
+    <td>${impostoCell(r,'cofins')}</td>
+    <td class="num" id="mpliq_${idx}"><b>${fmtBRL(mpCustoLiquido(r))}</b></td>
+    <td class="row-actions"><button class="del" onclick="delMP(${idx})">🗑️</button></td>
+  </tr>`;
+}
+function mpRecalcLinha(idx){ const el=$('#mpliq_'+idx); if(el) el.innerHTML='<b>'+fmtBRL(mpCustoLiquido(window._mpEdit[idx]))+'</b>'; }
+function addMP(mat){ window._mpEdit.push(novaLinhaMP(mat)); renderMP(); }
+function delMP(idx){ const r=window._mpEdit[idx]; if(r && r.id) window._mpRemovidos.push(r.id); window._mpEdit.splice(idx,1); renderMP(); }
+async function saveMP(){
+  const rows=window._mpEdit.filter(r=>String(r.bitola||'').trim());
+  // valida bitola duplicada por material
+  const chaves=new Set();
+  for(const r of rows){ const k=r.material+'|'+normBit(r.bitola); if(chaves.has(k)){ toast('Bitola repetida em '+(r.material==='Aluminio'?'Alumínio':'Aço')+': '+r.bitola,'err'); return; } chaves.add(k); }
+  // remove os excluídos
+  if(window._mpRemovidos.length){ await sb.from('materia_prima_custos').delete().in('id',window._mpRemovidos); }
+  // upsert
+  const payload=rows.map(r=>({ ...(r.id?{id:r.id}:{}), material:r.material, bitola:r.bitola.trim(), preco_bruto:brNum(r.preco_bruto),
+    icms_pct:Number(r.icms_pct)||0, icms_credita:!!r.icms_credita, ipi_pct:Number(r.ipi_pct)||0, ipi_credita:!!r.ipi_credita,
+    pis_pct:Number(r.pis_pct)||0, pis_credita:!!r.pis_credita, cofins_pct:Number(r.cofins_pct)||0, cofins_credita:!!r.cofins_credita,
+    updated_by:S.user.email }));
+  const {error}=await sb.from('materia_prima_custos').upsert(payload,{onConflict:'material,bitola'});
+  if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
+  await loadMP(); renderFormacao(); toast('Custos de MP salvos','ok'); logAcao('config_mp');
 }
 
 /* ============================================================
