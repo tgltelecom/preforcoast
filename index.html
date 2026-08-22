@@ -283,8 +283,15 @@ async function loadProdutos(){
 async function loadPrecos(){
   const {data,error}=await sb.from('precificacoes').select('*');
   if(error) return;
-  S.precos={}; (data||[]).forEach(p=>S.precos[p.produto_id]=p);
+  S.precos={}; S.precosArr=data||[];
+  (data||[]).forEach(p=>{ S.precos[chavePreco(p.produto_id,p.bitola)]=p; });
 }
+// chave única de precificação por produto + bitola
+function chavePreco(pid, bitola){ return pid+'::'+normBit(bitola); }
+function precoDe(pid, bitola){ return S.precos[chavePreco(pid,bitola)]; }
+function precosDoProduto(pid){ return (S.precosArr||[]).filter(p=>p.produto_id===pid); }
+function matLabel(mp){ return mp==='Aluminio'?'Alumínio':(mp==='Aco'?'Aço':'—'); }
+function matTag(mp){ return mp==='Aluminio'?'<span class="tag alu">Alumínio</span>':(mp==='Aco'?'<span class="tag aco">Aço</span>':'—'); }
 async function loadConfig(){
   const {data}=await sb.from('configuracoes').select('*').eq('id',1).single();
   S.config=data||{};
@@ -462,7 +469,11 @@ function descontoCliente(k){
 function renderTabela(){
   const q=S.search.tabela.toLowerCase();
   const desc=descontoCliente(S.clientType)/100;
-  const list=S.produtos.filter(p=>S.precos[p.id]).filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  // uma linha por precificação (produto + bitola)
+  const rows=(S.precosArr||[]).map(pr=>({pr, prod:S.produtos.find(x=>x.id===pr.produto_id)}))
+    .filter(x=>x.prod)
+    .filter(x=>!q||((x.prod.descricao+' '+x.prod.codigo+' '+(x.pr.bitola||'')).toLowerCase().includes(q)))
+    .sort((a,b)=>(a.prod.codigo+' '+(a.pr.bitola||'')).localeCompare(b.prod.codigo+' '+(b.pr.bitola||'')));
   $('#view').innerHTML=`
     <div class="page-head">
       <h2>Tabela de Preços</h2><div class="spacer"></div>
@@ -476,15 +487,15 @@ function renderTabela(){
     </div>
     <div class="card" style="padding:0">
       <table>
-        <thead><tr><th>Código</th><th>Descrição</th><th class="num">Peso (kg)</th>
+        <thead><tr><th>Código</th><th>Descrição</th><th>Bitola</th><th class="num">Peso (kg)</th>
           <th class="num">Venda Distribuidor</th><th class="num">Venda Provedor</th></tr></thead>
-        <tbody>${ list.length ? list.map(p=>{
-          const pr=S.precos[p.id];
+        <tbody>${ rows.length ? rows.map(({pr,prod})=>{
           const vd=pr.valor_distribuidor*(1-desc), vp=pr.valor_provedor*(1-desc);
-          return `<tr><td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td>
+          return `<tr><td><b>${esc(prod.codigo)}</b></td><td>${esc(prod.descricao)}</td>
+            <td>${esc(pr.bitola||'—')}</td>
             <td class="num">${fmtN(pr.peso,3)}</td>
             <td class="num">${fmtBRL(vd)}</td><td class="num">${fmtBRL(vp)}</td></tr>`;
-        }).join('') : `<tr><td colspan="5"><div class="empty">Nenhum produto precificado ainda. Vá em <b>Formação de Preços → Precificar</b>.</div></td></tr>`}</tbody>
+        }).join('') : `<tr><td colspan="6"><div class="empty">Nenhum produto precificado ainda. Vá em <b>Formação de Preços → Precificar</b>.</div></td></tr>`}</tbody>
       </table>
     </div>
     ${desc>0?`<div class="hint">Preços exibidos já com desconto de ${fmtN(desc*100,1)}% para <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`:`<div class="hint">Valor cheio (sem desconto) — <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`}`;
@@ -511,53 +522,62 @@ function renderFormacao(){
 
 function subPrecificar(){
   const q=S.search.precificar.toLowerCase();
-  const list=S.produtos.filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  const prods=S.produtos.filter(p=>!q||(p.descricao+' '+p.codigo).toLowerCase().includes(q));
+  // uma linha por produto + bitola (bitolas vêm da mini-tabela de pesos do cadastro)
+  const rows=[];
+  prods.forEach(p=>{
+    const bits=(Array.isArray(p.pesos)&&p.pesos.length)? p.pesos : [{bitola:'',peso:null}];
+    bits.forEach(b=>rows.push({p, bitola:b.bitola||'', peso:b.peso}));
+  });
   $('#subview').innerHTML=`
     <div class="page-head">
       <div class="search"><span class="ic">🔍</span>
         <input placeholder="Buscar produto..." value="${esc(S.search.precificar)}"
           oninput="S.search.precificar=this.value;subPrecificar();this.focus()"></div>
+      <div class="spacer"></div>
+      <div class="hint" style="margin:0">Uma linha por produto + bitola. Cada bitola é precificada separadamente.</div>
     </div>
     <div class="card" style="padding:0">
       <table>
-        <thead><tr><th>Código</th><th>Descrição</th><th>Matéria Prima</th><th class="num">Peso (kg)</th>
+        <thead><tr><th>Código</th><th>Descrição</th><th>Matéria Prima</th><th>Bitola</th><th class="num">Peso (kg)</th>
           <th class="num">Distribuidor</th><th class="num">Provedor</th><th>Status</th><th></th></tr></thead>
-        <tbody>${ list.length ? list.map(p=>{
-          const pr=S.precos[p.id];
-          const mp=p.materia_prima==='Aluminio'?'<span class="tag alu">Alumínio</span>':(p.materia_prima==='Aco'?'<span class="tag aco">Aço</span>':'—');
+        <tbody>${ rows.length ? rows.map(({p,bitola,peso})=>{
+          const pr=precoDe(p.id,bitola);
+          const pesoShow = pr? pr.peso : peso;
+          const bitAttr=(bitola||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
           return `<tr>
-            <td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td><td>${mp}</td>
-            <td class="num">${pr?fmtN(pr.peso,3):'—'}</td>
+            <td><b>${esc(p.codigo)}</b></td><td>${esc(p.descricao)}</td><td>${matTag(p.materia_prima)}</td>
+            <td>${esc(bitola||'—')}</td>
+            <td class="num">${pesoShow!=null?fmtN(pesoShow,3):'—'}</td>
             <td class="num">${pr?fmtBRL(pr.valor_distribuidor):'—'}</td>
             <td class="num">${pr?fmtBRL(pr.valor_provedor):'—'}</td>
             <td>${pr?'<span class="tag ok">Precificado</span>':'<span class="tag no">Pendente</span>'}</td>
-            <td class="row-actions"><button title="${pr?'Editar':'Precificar'}" onclick="openPrecificar('${p.id}')">${pr?'✏️ Editar':'🏷️ Precificar'}</button></td></tr>`;
-        }).join('') : `<tr><td colspan="8"><div class="empty">Nenhum produto encontrado.</div></td></tr>`}</tbody>
+            <td class="row-actions"><button title="${pr?'Editar':'Precificar'}" onclick="openPrecificar('${p.id}','${bitAttr}')">${pr?'✏️ Editar':'🏷️ Precificar'}</button></td></tr>`;
+        }).join('') : `<tr><td colspan="9"><div class="empty">Nenhum produto encontrado.</div></td></tr>`}</tbody>
       </table>
     </div>`;
 }
 
-function openPrecificar(pid){
-  const p=S.produtos.find(x=>x.id===pid); const pr=S.precos[pid];
-  const cfg=S.config||{};
+function openPrecificar(pid, bitola){
+  bitola = bitola||'';
+  const p=S.produtos.find(x=>x.id===pid);
+  const pr=precoDe(pid, bitola);
   const bitolas=Array.isArray(p.pesos)?p.pesos:[];
-  const pesoIni = pr?pr.peso : (bitolas[0]?.peso ?? '');
-  const bitIni  = pr?pr.bitola : (bitolas[0]?.bitola ?? '');
+  const bRow=bitolas.find(b=>normBit(b.bitola)===normBit(bitola));
+  const pesoIni = pr? pr.peso : (bRow?.peso ?? '');
   const padrao = variaveisPorMateria(p.materia_prima);
   const vd = pr?pr.variavel_distribuidor : (padrao.dist||0);
   const vp = pr?pr.variavel_provedor : (padrao.prov||0);
-  window._precCtx={pid, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18'};
-  modal(`Precificar — ${esc(p.descricao)}`, `
+  window._precCtx={pid, bitola, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18'};
+  const bitField = bitola
+    ? `<input readonly value="${esc(bitola)}">`
+    : `<input id="p_bit_txt" value="" placeholder="ex: 1,80mm" oninput="window._precCtx.bitola=this.value;drawBreakdown()">`;
+  modal(`Precificar — ${esc(p.descricao)}${bitola?' · Bitola '+esc(bitola):''}`, `
     <div class="grid g3">
       <div class="fld"><label>Produto</label><input readonly value="${esc(p.descricao)}"></div>
       <div class="fld"><label>Código</label><input readonly value="${esc(p.codigo)}"></div>
-      <div class="fld"><label>Matéria Prima</label><input readonly value="${p.materia_prima==='Aluminio'?'Alumínio':(p.materia_prima==='Aco'?'Aço':'—')}"></div>
-      <div class="fld"><label>Bitola da MP</label>
-        ${bitolas.length?`<select id="p_bit" onchange="onBitola()">
-            ${bitolas.map(b=>`<option value="${esc(b.bitola)}" data-peso="${b.peso}" ${b.bitola===bitIni?'selected':''}>${esc(b.bitola)}</option>`).join('')}
-            <option value="__nova__">+ Nova bitola...</option>
-          </select>`:`<input id="p_bit_txt" value="${esc(bitIni)}" placeholder="ex: 1,80mm">`}
-      </div>
+      <div class="fld"><label>Matéria Prima</label><input readonly value="${matLabel(p.materia_prima)}"></div>
+      <div class="fld"><label>Bitola da MP</label>${bitField}</div>
       <div class="fld"><label>Peso da alça (kg) <span class="req">*</span></label>
         <input id="p_peso" value="${pesoIni!==''?String(pesoIni).replace('.',','):''}" placeholder="ex: 0,420" oninput="recalc()"></div>
       <div class="fld"><label>ICMS / Regime (impostos)</label>
@@ -578,25 +598,12 @@ function openPrecificar(pid){
       <div class="fld"><label>Valor de venda — Provedor (editável)</label>
         <div class="inline-prefix"><span>R$</span><input id="p_rp" onkeyup="maskBRL(this);window._precCtx.valEditP=brNum(this.value);drawBreakdown()"></div></div>
     </div>
-    <div class="hint">Variáveis puxadas automaticamente da matéria prima <b>${p.materia_prima==='Aluminio'?'Alumínio':(p.materia_prima==='Aco'?'Aço':'—')}</b>. Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
+    <div class="hint">Variáveis puxadas automaticamente da matéria prima <b>${matLabel(p.materia_prima)}</b>. Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
     <div id="breakdown"></div>
   `, [
     {txt:'Cancelar',cls:'ghost',fn:closeModal},
     {txt:'Salvar precificação',cls:'',fn:()=>savePrecificacao(pid)}
   ]);
-  recalc();
-}
-function onBitola(){
-  const sel=$('#p_bit'); if(!sel) return;
-  if(sel.value==='__nova__'){
-    const nome=prompt('Nova bitola (ex: 1,80mm):'); const peso=prompt('Peso para essa bitola (kg, ex: 0,420):');
-    if(nome){ window._precCtx.novaBitola={bitola:nome,peso:brNum(peso)};
-      const opt=document.createElement('option'); opt.value=nome; opt.dataset.peso=brNum(peso); opt.textContent=nome+' (nova)';
-      sel.insertBefore(opt, sel.lastElementChild); sel.value=nome; }
-    else sel.selectedIndex=0;
-  }
-  const o=sel.selectedOptions[0];
-  if(o&&o.dataset.peso) $('#p_peso').value=String(o.dataset.peso).replace('.',',');
   recalc();
 }
 function currentPeso(){ return brNum($('#p_peso')?.value); }
@@ -626,7 +633,7 @@ function drawBreakdown(){
   const sobra=V-vFixo-vVar-vFidc-vImp;
   const prod = S.produtos.find(x=>x.id===window._precCtx.pid);
   const pname = prod?.descricao||'';
-  const bitSel = $('#p_bit') ? $('#p_bit').value : ($('#p_bit_txt')?.value||'');
+  const bitSel = window._precCtx.bitola||'';
   const peso = brNum($('#p_peso')?.value);
   const custoKg = custoKgMP(prod?.materia_prima, bitSel);
   const custoMP = custoKg!=null ? custoKg*peso : null;
@@ -657,22 +664,22 @@ async function savePrecificacao(pid){
   const peso=currentPeso();
   if(!peso||peso<=0){ toast('Informe o peso da alça','err'); return; }
   const p=S.produtos.find(x=>x.id===pid);
-  const bit = $('#p_bit') ? $('#p_bit').value : ($('#p_bit_txt')?.value||null);
-  const rec={ produto_id:pid, bitola: bit==='__nova__'?null:bit, peso,
+  const bit = (window._precCtx.bitola||'').trim();
+  const rec={ produto_id:pid, bitola: bit, peso,
     variavel_distribuidor:brNum($('#p_vd').value), variavel_provedor:brNum($('#p_vp').value),
     valor_distribuidor:brNum($('#p_rd').value), valor_provedor:brNum($('#p_rp').value),
     icms_flag:$('#p_icms').value, updated_by:S.user.email };
-  // grava/atualiza bitola no cadastro do produto se for nova
-  let pesos=Array.isArray(p.pesos)?JSON.parse(JSON.stringify(p.pesos)):[];
-  if(bit && bit!=='__nova__'){
-    const ex=pesos.find(x=>x.bitola===bit);
+  // grava/atualiza a bitola no cadastro do produto (mini-tabela de pesos)
+  if(bit){
+    let pesos=Array.isArray(p.pesos)?JSON.parse(JSON.stringify(p.pesos)):[];
+    const ex=pesos.find(x=>normBit(x.bitola)===normBit(bit));
     if(ex) ex.peso=peso; else pesos.push({bitola:bit,peso});
     await sb.from('produtos').update({pesos}).eq('id',pid);
   }
-  const {error}=await sb.from('precificacoes').upsert(rec,{onConflict:'produto_id'});
+  const {error}=await sb.from('precificacoes').upsert(rec,{onConflict:'produto_id,bitola'});
   if(error){ toast('Erro ao salvar precificação: '+error.message,'err'); return; }
   await loadProdutos(); await loadPrecos(); closeModal(); renderFormacao();
-  toast('Precificação salva','ok'); logAcao('precificar',p.descricao);
+  toast('Precificação salva','ok'); logAcao('precificar',p.descricao+(bit?' · '+bit:''));
 }
 
 /* ---- Sub-aba: Custos Fixos e Variáveis ---- */
