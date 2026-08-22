@@ -82,6 +82,10 @@
   .row-actions button:hover{background:var(--azul-claro)}
   .row-actions button.del{color:var(--vermelho)}
   .row-actions button.del:hover{background:#fdecea}
+  .expbtn{border:1px solid var(--borda);background:#fff;border-radius:6px;width:22px;height:22px;line-height:1;margin-right:8px;color:var(--azul);font-weight:800;padding:0}
+  .expbtn:hover{background:var(--azul-claro)}
+  tr.subrow td{background:#f7f9fc;font-size:13px;color:#4a5560}
+  .tag.prin{background:#fff3d6;color:#9a7400}
 
   /* client type pills */
   .pills{display:flex;gap:6px;flex-wrap:wrap}
@@ -119,8 +123,9 @@
 
   /* peso mini table */
   .pesos-tbl{width:100%;border:1px solid var(--borda);border-radius:8px;overflow:hidden;margin-top:6px}
-  .pesos-tbl .ph{display:grid;grid-template-columns:1fr 1fr 40px;background:var(--cinza);padding:7px 10px;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase}
-  .pesos-tbl .pr{display:grid;grid-template-columns:1fr 1fr 40px;gap:8px;padding:7px 10px;align-items:center;border-top:1px solid #eef1f5}
+  .pesos-tbl .ph{display:grid;grid-template-columns:1fr 1fr 96px 40px;background:var(--cinza);padding:7px 10px;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .pesos-tbl .pr{display:grid;grid-template-columns:1fr 1fr 96px 40px;gap:8px;padding:7px 10px;align-items:center;border-top:1px solid #eef1f5}
+  .pesos-tbl .pr label.prin{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);font-weight:600;cursor:pointer}
   .pesos-tbl .pr input{padding:7px 9px;border:1px solid var(--borda);border-radius:6px;width:100%}
   .pesos-tbl .pr button{border:none;background:#fdecea;color:var(--vermelho);border-radius:6px;padding:6px}
 
@@ -414,18 +419,23 @@ function reparse(){
 }
 function renderPesos(){
   const box=$('#pesosBox'); if(!box) return;
-  box.innerHTML=`<div class="pesos-tbl"><div class="ph"><div>Bitola da MP</div><div>Peso (kg)</div><div></div></div>
+  const multi=window._pesos.length>1;
+  box.innerHTML=`<div class="pesos-tbl"><div class="ph"><div>Bitola da MP</div><div>Peso (kg)</div><div>${multi?'Principal':''}</div><div></div></div>
     ${window._pesos.map((r,i)=>`<div class="pr">
       <input value="${esc(r.bitola||'')}" placeholder="ex: 1,80mm" oninput="window._pesos[${i}].bitola=this.value">
       <input value="${r.peso!=null?String(r.peso).replace('.',','):''}" placeholder="ex: 0,420" oninput="window._pesos[${i}].peso=brNum(this.value)">
+      <label class="prin" title="Bitola principal (preço mostrado na Tabela de Preços)">${multi?`<input type="radio" name="peso_principal" ${r.principal?'checked':''} onchange="setPrincipal(${i})"> Principal`:''}</label>
       <button onclick="window._pesos.splice(${i},1);renderPesos()">✕</button></div>`).join('')||'<div class="pr" style="color:var(--muted);grid-template-columns:1fr">Nenhuma bitola. Adicione ao menos uma se já souber o peso.</div>'}
-  </div>`;
+  </div>${multi?'<div class="hint" style="margin-top:6px">A bitola marcada como <b>Principal</b> é a que aparece na linha do produto na Tabela de Preços.</div>':''}`;
 }
-function addPeso(){ window._pesos.push({bitola:'',peso:null}); renderPesos(); }
+function setPrincipal(i){ window._pesos.forEach((x,j)=>x.principal=(j===i)); renderPesos(); }
+function addPeso(){ window._pesos.push({bitola:'',peso:null,principal:window._pesos.length===0}); renderPesos(); }
 
 async function saveProduto(id){
   const codigo=$('#f_codigo').value.trim(), descricao=$('#f_descricao').value.trim();
   if(!codigo||!descricao){ toast('Código e Descrição são obrigatórios','err'); return; }
+  let pesosSave=window._pesos.filter(r=>r.bitola||r.peso);
+  if(pesosSave.length && !pesosSave.some(r=>r.principal)) pesosSave[0].principal=true; // garante 1 principal
   const rec={ codigo, descricao,
     tipo:$('#f_tipo').value||null,
     materia_prima:$('#f_mp').value||null,
@@ -434,7 +444,7 @@ async function saveProduto(id){
     range_max: $('#f_rmax').value?brNum($('#f_rmax').value):null,
     comprimento: $('#f_comp').value?parseInt($('#f_comp').value,10):null,
     qtd_varetas: $('#f_var').value?parseInt($('#f_var').value,10):null,
-    pesos: window._pesos.filter(r=>r.bitola||r.peso),
+    pesos: pesosSave,
     created_by:S.user.email
   };
   let error;
@@ -466,14 +476,50 @@ function descontoCliente(k){
   const c=S.config||{};
   return {'18':c.desc_icms18,'12':c.desc_icms12,'7':c.desc_icms7,'simples':c.desc_simples}[k]||0;
 }
+function bitolaPrincipal(prod){
+  const arr=Array.isArray(prod.pesos)?prod.pesos:[];
+  const p=arr.find(x=>x.principal);
+  return p? p.bitola : (arr[0]?.bitola ?? null);
+}
+function toggleTab(pid){ if(!S.tabExp) S.tabExp=new Set(); if(S.tabExp.has(pid)) S.tabExp.delete(pid); else S.tabExp.add(pid); renderTabela(); }
 function renderTabela(){
   const q=S.search.tabela.toLowerCase();
   const desc=descontoCliente(S.clientType)/100;
-  // uma linha por precificação (produto + bitola)
-  const rows=(S.precosArr||[]).map(pr=>({pr, prod:S.produtos.find(x=>x.id===pr.produto_id)}))
-    .filter(x=>x.prod)
-    .filter(x=>!q||((x.prod.descricao+' '+x.prod.codigo+' '+(x.pr.bitola||'')).toLowerCase().includes(q)))
-    .sort((a,b)=>(a.prod.codigo+' '+(a.pr.bitola||'')).localeCompare(b.prod.codigo+' '+(b.pr.bitola||'')));
+  if(!S.tabExp) S.tabExp=new Set();
+  // agrupa por produto: só produtos com ao menos uma bitola precificada
+  const groups=[];
+  S.produtos.forEach(prod=>{
+    let prs=precosDoProduto(prod.id);
+    if(!prs.length) return;
+    if(q && !((prod.descricao+' '+prod.codigo+' '+prs.map(p=>p.bitola).join(' ')).toLowerCase().includes(q))) return;
+    prs=prs.slice().sort((a,b)=>String(a.bitola||'').localeCompare(String(b.bitola||'')));
+    groups.push({prod, prs});
+  });
+  groups.sort((a,b)=>a.prod.codigo.localeCompare(b.prod.codigo));
+  const linha=(pr,desc)=>{ const vd=pr.valor_distribuidor*(1-desc), vp=pr.valor_provedor*(1-desc); return {vd,vp}; };
+  const bodyHtml = groups.length ? groups.map(({prod,prs})=>{
+    const principalBit=bitolaPrincipal(prod);
+    const main = prs.find(p=>principalBit && normBit(p.bitola)===normBit(principalBit)) || prs[0];
+    const multi = prs.length>1;
+    const exp = S.tabExp.has(prod.id);
+    const {vd,vp}=linha(main,desc);
+    const isMainPrin = principalBit && normBit(main.bitola)===normBit(principalBit);
+    let html=`<tr>
+      <td style="white-space:nowrap">${multi?`<button class="expbtn" title="Ver preços por bitola" onclick="toggleTab('${prod.id}')">${exp?'−':'+'}</button>`:'<span style="display:inline-block;width:30px"></span>'}<b>${esc(prod.codigo)}</b></td>
+      <td>${esc(prod.descricao)}</td>
+      <td>${esc(main.bitola||'—')}${isMainPrin&&multi?' <span class="tag prin">principal</span>':''}</td>
+      <td class="num">${fmtN(main.peso,3)}</td>
+      <td class="num">${fmtBRL(vd)}</td><td class="num">${fmtBRL(vp)}</td></tr>`;
+    if(multi && exp){
+      html+=prs.map(p=>{ const r=linha(p,desc); const isP=principalBit&&normBit(p.bitola)===normBit(principalBit);
+        return `<tr class="subrow"><td></td><td style="padding-left:26px">↳ bitola</td>
+          <td>${esc(p.bitola||'—')}${isP?' <span class="tag prin">principal</span>':''}</td>
+          <td class="num">${fmtN(p.peso,3)}</td>
+          <td class="num">${fmtBRL(r.vd)}</td><td class="num">${fmtBRL(r.vp)}</td></tr>`;
+      }).join('');
+    }
+    return html;
+  }).join('') : `<tr><td colspan="6"><div class="empty">Nenhum produto precificado ainda. Vá em <b>Formação de Preços → Precificar</b>.</div></td></tr>`;
   $('#view').innerHTML=`
     <div class="page-head">
       <h2>Tabela de Preços</h2><div class="spacer"></div>
@@ -489,16 +535,10 @@ function renderTabela(){
       <table>
         <thead><tr><th>Código</th><th>Descrição</th><th>Bitola</th><th class="num">Peso (kg)</th>
           <th class="num">Venda Distribuidor</th><th class="num">Venda Provedor</th></tr></thead>
-        <tbody>${ rows.length ? rows.map(({pr,prod})=>{
-          const vd=pr.valor_distribuidor*(1-desc), vp=pr.valor_provedor*(1-desc);
-          return `<tr><td><b>${esc(prod.codigo)}</b></td><td>${esc(prod.descricao)}</td>
-            <td>${esc(pr.bitola||'—')}</td>
-            <td class="num">${fmtN(pr.peso,3)}</td>
-            <td class="num">${fmtBRL(vd)}</td><td class="num">${fmtBRL(vp)}</td></tr>`;
-        }).join('') : `<tr><td colspan="6"><div class="empty">Nenhum produto precificado ainda. Vá em <b>Formação de Preços → Precificar</b>.</div></td></tr>`}</tbody>
+        <tbody>${bodyHtml}</tbody>
       </table>
     </div>
-    ${desc>0?`<div class="hint">Preços exibidos já com desconto de ${fmtN(desc*100,1)}% para <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`:`<div class="hint">Valor cheio (sem desconto) — <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.</div>`}`;
+    <div class="hint">A linha do produto mostra a <b>bitola principal</b>. No <b>+</b> (quando há mais de uma bitola precificada) você abre os preços por bitola. ${desc>0?`Preços já com desconto de ${fmtN(desc*100,1)}% para <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.`:`Valor cheio — <b>${CLIENTES.find(c=>c.k===S.clientType).lbl}</b>.`}</div>`;
 }
 
 /* ============================================================
