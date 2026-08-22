@@ -723,33 +723,78 @@ async function savePrecificacao(pid){
 }
 
 /* ---- Sub-aba: Custos Fixos e Variáveis ---- */
+function defaultCustosFixos(){ return [
+  'Aluguel','Água','Energia (luz)','Telefone / Internet','Funcionários (salários + encargos)',
+  'Pró-labore / reembolsos de sócios','Empréstimos pagos no mês','Contador / honorários contábeis',
+  'Software / sistemas / licenças','Seguros','Manutenção / equipamentos','IPTU / taxas / alvará',
+  'Material de escritório e limpeza','Vale-transporte / vale-refeição','Marketing fixo (assinaturas)'
+].map(n=>({nome:n, valor:0})); }
 function subCustos(){
+  const c=S.config||{};
+  const temItens=Array.isArray(c.custos_fixos_itens)&&c.custos_fixos_itens.length;
+  window._cfItens = temItens ? JSON.parse(JSON.stringify(c.custos_fixos_itens)) : defaultCustosFixos();
+  window._cfTotalIni = temItens ? somaCF() : (c.custos_fixos||0);
+  renderCustos();
+}
+function somaCF(){ return (window._cfItens||[]).reduce((s,r)=>s+(brNum(r.valor)||0),0); }
+function recalcCF(){ const el=$('#c_fix'); if(el) el.value=fmtN(somaCF()); atualizaStatCF(); }
+function atualizaStatCF(){
+  const fat=brNum($('#c_fat')?.value), cf=brNum($('#c_fix')?.value), cv=brNum($('#c_var')?.value);
+  const e1=$('#stat_cf'), e2=$('#stat_cv');
+  if(e1) e1.textContent=(fat>0?fmtN(cf/fat*100,1):'0,0')+'%';
+  if(e2) e2.textContent=(fat>0?fmtN(cv/fat*100,1):'0,0')+'%';
+}
+function renderCustos(){
   const c=S.config||{};
   $('#subview').innerHTML=`
     <div class="card">
-      <div class="grid">
+      <div class="grid g3">
         <div class="fld"><label>Faturamento do mês</label>
-          <div class="inline-prefix"><span>R$</span><input id="c_fat" value="${fmtN(c.faturamento_mes||0)}" onkeyup="maskBRL(this)"></div></div>
-        <div class="fld"><label>Custos Fixos</label>
-          <div class="inline-prefix"><span>R$</span><input id="c_fix" value="${fmtN(c.custos_fixos||0)}" onkeyup="maskBRL(this)"></div></div>
+          <div class="inline-prefix"><span>R$</span><input id="c_fat" value="${fmtN(c.faturamento_mes||0)}" onkeyup="maskBRL(this);atualizaStatCF()"></div></div>
         <div class="fld"><label>Custos Variáveis</label>
-          <div class="inline-prefix"><span>R$</span><input id="c_var" value="${fmtN(c.custos_variaveis||0)}" onkeyup="maskBRL(this)"></div></div>
+          <div class="inline-prefix"><span>R$</span><input id="c_var" value="${fmtN(c.custos_variaveis||0)}" onkeyup="maskBRL(this);atualizaStatCF()"></div></div>
         <div class="fld"><label>Custo FIDC (%)</label>
           <input id="c_fidc" type="number" step="0.01" value="${c.custo_fidc_pct??0}"></div>
       </div>
-      <div style="margin-top:16px"><button class="btn sm" onclick="saveCustos()">Salvar custos</button></div>
+
+      <h3 style="margin:22px 0 4px">Custo Fixo — detalhamento</h3>
+      <p style="margin:0 0 12px;color:var(--muted);font-size:13px">Preencha cada item (R$/mês). O total soma automaticamente. Itens que não se aplicam, deixe em R$ 0.</p>
+      <div id="cfBox"></div>
+      <button class="btn ghost" style="margin-top:10px" onclick="addCF()">+ Adicionar item de custo fixo</button>
+
+      <div class="fld" style="max-width:360px;margin-top:20px"><label>Custo Fixo (total)</label>
+        <div class="inline-prefix"><span>R$</span><input id="c_fix" value="${fmtN(window._cfTotalIni||0)}" onkeyup="maskBRL(this);atualizaStatCF()"></div>
+        <div class="hint">Soma dos itens acima. Você pode sobrescrever, mas ao mexer em qualquer item ele re-soma.</div>
+      </div>
+
+      <div style="margin-top:18px"><button class="btn sm" onclick="saveCustos()">Salvar custos</button></div>
     </div>
     <div class="grid g3">
-      <div class="stat"><div class="lbl">% Custos fixos / faturamento</div><div class="val">${(c.faturamento_mes>0)?fmtN((c.custos_fixos/c.faturamento_mes)*100,1):'0,0'}%</div></div>
-      <div class="stat"><div class="lbl">% Custos variáveis / faturamento</div><div class="val">${(c.faturamento_mes>0)?fmtN((c.custos_variaveis/c.faturamento_mes)*100,1):'0,0'}%</div></div>
+      <div class="stat"><div class="lbl">% Custos fixos / faturamento</div><div class="val" id="stat_cf">0,0%</div></div>
+      <div class="stat"><div class="lbl">% Custos variáveis / faturamento</div><div class="val" id="stat_cv">0,0%</div></div>
       <div class="stat"><div class="lbl">FIDC</div><div class="val">${fmtN(c.custo_fidc_pct||0,2)}%</div></div>
     </div>`;
+  renderCFItens();
+  atualizaStatCF();
 }
+function renderCFItens(){
+  const box=$('#cfBox'); if(!box) return;
+  box.innerHTML=`<div class="pesos-tbl"><div class="ph" style="grid-template-columns:1fr 210px 40px"><div>Custo</div><div>Valor (R$/mês)</div><div></div></div>
+    ${window._cfItens.map((r,i)=>`<div class="pr" style="grid-template-columns:1fr 210px 40px">
+      <input value="${esc(r.nome||'')}" placeholder="nome do custo" oninput="window._cfItens[${i}].nome=this.value">
+      <div class="inline-prefix"><span>R$</span><input value="${fmtN(r.valor||0)}" onkeyup="maskBRL(this);window._cfItens[${i}].valor=brNum(this.value);recalcCF()" style="padding-left:30px"></div>
+      <button onclick="window._cfItens.splice(${i},1);renderCFItens();recalcCF()">✕</button></div>`).join('')}
+  </div>`;
+}
+function addCF(){ window._cfItens.push({nome:'',valor:0}); renderCFItens(); }
 async function saveCustos(){
+  const itens=(window._cfItens||[]).filter(r=>(r.nome&&r.nome.trim())||brNum(r.valor)>0)
+    .map(r=>({nome:(r.nome||'').trim(), valor:brNum(r.valor)}));
   const rec={ faturamento_mes:brNum($('#c_fat').value), custos_fixos:brNum($('#c_fix').value),
+    custos_fixos_itens:itens,
     custos_variaveis:brNum($('#c_var').value), custo_fidc_pct:parseFloat($('#c_fidc').value)||0 };
   const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
-  if(error){ toast('Erro ao salvar','err'); return; }
+  if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
   await loadConfig(); renderFormacao(); toast('Custos atualizados','ok'); logAcao('config_custos');
 }
 
