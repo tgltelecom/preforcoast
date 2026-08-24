@@ -220,28 +220,45 @@ function toast(msg,type=''){ const t=$('#toast'); t.textContent=msg; t.className
 async function logAcao(acao,detalhe=''){ try{ await sb.from('logs').insert({user_email:S.user?.email,acao,detalhe}); }catch(e){} }
 
 /* ---------------- Parser de descrição ---------------- */
-const CORES=['BRANCO','PRETO','AZUL','VERMELHO','VERDE','AMARELO','LARANJA','MARROM','CINZA','ROSA','ROXO','VIOLETA','BEGE'];
+// cor canônica -> variantes (regex); usa limites que respeitam acentos
+const COR_MAP=[
+  ['BRANCO',['BRANCO','BRANCA']],['PRETO',['PRETO','PRETA']],['AZUL',['AZUL']],
+  ['VERMELHO',['VERMELHO','VERMELHA']],['VERDE',['VERDE']],['AMARELO',['AMARELO','AMARELA']],
+  ['LARANJA',['LARANJA']],['MARROM',['MARROM']],['CINZA',['CINZA']],['ROSA',['ROSA']],
+  ['ROXO',['ROXO','ROXA']],['VIOLETA',['VIOLETA']],['LILÁS',['LIL[ÁA]S']],
+  ['PÚRPURA',['P[ÚU]RPURA']],['BEGE',['BEGE']]
+];
+const _W='0-9A-Za-zÀ-ÿ'; // "letras" incluindo acentuadas
+function _tok(t){ return new RegExp('(?<!['+_W+'])'+t+'(?!['+_W+'])'); } // token isolado (respeita acento)
 function parseDescricao(nome){
   const s=(nome||'').toUpperCase();
   const o={tipo:null,materia_prima:null,range_min:null,range_max:null,cor:null,comprimento:null,qtd_varetas:null,alertas:[]};
-  if(/AL[ÇC]A|ALCA/.test(s)) o.tipo='ALÇA PREFORMADA';
-  else if(/LA[ÇC]O/.test(s)) o.tipo='LAÇO PREFORMADO';
+  // Tipo
+  if(/LA[ÇC]O/.test(s)) o.tipo='LAÇO PREFORMADO';
+  else if(/AL[ÇC]A|ALCA/.test(s)) o.tipo='ALÇA PREFORMADA';
   else if(/DERIVA/.test(s)) o.tipo='DERIVAÇÃO';
   else if(/EMENDA/.test(s)) o.tipo='EMENDA';
+  else if(/CONJ/.test(s)) o.tipo='CONJUNTO PREFORMADO';
   else o.alertas.push('Tipo');
-  if(/AL\s+CABO\s+OPTICO/.test(s)) o.materia_prima='Aluminio';
-  else if(/AC\s+CCE/.test(s)) o.materia_prima='Aco';
-  else if(/\bAL\b/.test(s)) o.materia_prima='Aluminio';
-  else if(/\bAC\b/.test(s)) o.materia_prima='Aco';
+  // Matéria prima (Alumínio tem prioridade explícita; evita falso "AL" em "ALÇA")
+  if(/AL\s+CABO\s+OPTICO/.test(s) || /ALUM[IÍ]NIO/.test(s) || _tok('AL').test(s)) o.materia_prima='Aluminio';
+  else if(/AC\s+CCE/.test(s) || _tok('A[ÇC]O').test(s) || /GALV/.test(s) || _tok('AC').test(s)) o.materia_prima='Aco';
   else o.alertas.push('Matéria Prima');
-  const r=s.match(/(\d+[,.]\d+)\s*[-–]\s*(\d+[,.]\d+)\s*MM/);
-  if(r){ o.range_min=brNum(r[1]); o.range_max=brNum(r[2]); } else o.alertas.push('Range');
-  const semRange = r ? s.replace(r[0],' ') : s;
+  // Range (dois decimais separados por - – ou " A "; mm opcional). Fallback: bitola única X,XXmm
+  let r=s.match(/(\d+[,.]\d+)\s*[-–]\s*(\d+[,.]\d+)\s*(?:MM)?/) || s.match(/(\d+[,.]\d+)\s+A\s+(\d+[,.]\d+)/);
+  let usado='';
+  if(r){ o.range_min=brNum(r[1]); o.range_max=brNum(r[2]); usado=r[0]; }
+  else { const m=s.match(/(\d+[,.]\d+)\s*MM/); if(m){ o.range_min=o.range_max=brNum(m[1]); usado=m[0]; } else o.alertas.push('Range'); }
+  // Comprimento (mm; fallback CM -> x10)
+  const semRange = usado ? s.replace(usado,' ') : s;
   const c=semRange.match(/(\d{2,4})\s*MM/);
-  if(c) o.comprimento=parseInt(c[1],10); else o.alertas.push('Comprimento');
-  const v=s.match(/(\d+)\s*V\b/);
+  if(c) o.comprimento=parseInt(c[1],10);
+  else { const cm=s.match(/(\d{2,3})\s*CM\b/); if(cm) o.comprimento=parseInt(cm[1],10)*10; else o.alertas.push('Comprimento'); }
+  // Varetas (NV, sem letra logo após; ou "N FIOS")
+  const v=s.match(/(\d+)\s*V(?![A-Za-z])/) || s.match(/(\d+)\s*(?:FIOS|FIO)\b/);
   if(v) o.qtd_varetas=parseInt(v[1],10); else o.alertas.push('Varetas');
-  for(const cor of CORES){ if(new RegExp('\\b'+cor+'\\b').test(s)){ o.cor=cor; break; } }
+  // Cor (canônica)
+  for(const [canon,vars] of COR_MAP){ if(vars.some(vv=>_tok(vv).test(s))){ o.cor=canon; break; } }
   if(!o.cor) o.alertas.push('Cor');
   return o;
 }
