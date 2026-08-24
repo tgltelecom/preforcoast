@@ -667,10 +667,11 @@ function drawBreakdown(){
   const frFixo = fat>0 ? (Number(cfg.custos_fixos)||0)/fat : 0;
   const frVar  = fat>0 ? (Number(cfg.custos_variaveis)||0)/fat : 0;
   const fidcPct=(Number(cfg.custo_fidc_pct)||0)/100;
+  const comisPct=(Number(cfg.comissao_pct)||0)/100;
   const icms=$('#p_icms')?.value||'18';
   const taxPct=TAX[icms];
-  const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vImp=V*taxPct;
-  const sobra=V-vFixo-vVar-vFidc-vImp;
+  const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vComis=V*comisPct, vImp=V*taxPct;
+  const sobra=V-vFixo-vVar-vFidc-vComis-vImp;
   const prod = S.produtos.find(x=>x.id===window._precCtx.pid);
   const pname = prod?.descricao||'';
   const bitSel = window._precCtx.bitola||'';
@@ -694,6 +695,7 @@ function drawBreakdown(){
     <div class="lin"><span>Custos fixos</span><span>${fmtBRL(vFixo)} <small style="color:var(--muted)">(${fmtN(frFixo*100,1)}%)</small></span></div>
     <div class="lin"><span>Custos variáveis</span><span>${fmtBRL(vVar)} <small style="color:var(--muted)">(${fmtN(frVar*100,1)}%)</small></span></div>
     <div class="lin"><span>Antecipação FIDC</span><span>${fmtBRL(vFidc)} <small style="color:var(--muted)">(${fmtN(fidcPct*100,1)}%)</small></span></div>
+    <div class="lin"><span>Comissão</span><span>${fmtBRL(vComis)} <small style="color:var(--muted)">(${fmtN(comisPct*100,1)}%)</small></span></div>
     <div class="lin"><span>Impostos (${icms==='simples'?'Simples 6%':'ICMS '+icms+'%'})</span><span>${fmtBRL(vImp)} <small style="color:var(--muted)">(${fmtN(taxPct*100,2)}%)</small></span></div>
     <div class="lin total"><span>Margem restante</span><span style="color:${sobra>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(sobra)}</span></div>
     ${mpHtml}
@@ -755,6 +757,8 @@ function renderCustos(){
           <div class="inline-prefix"><span>R$</span><input id="c_var" value="${fmtN(c.custos_variaveis||0)}" onkeyup="maskBRL(this);atualizaStatCF()"></div></div>
         <div class="fld"><label>Custo FIDC (%)</label>
           <input id="c_fidc" type="number" step="0.01" value="${c.custo_fidc_pct??0}"></div>
+        <div class="fld"><label>Comissão (%)</label>
+          <input id="c_comis" type="number" step="0.01" value="${c.comissao_pct??0}"></div>
       </div>
 
       <h3 style="margin:22px 0 4px">Custo Fixo — detalhamento</h3>
@@ -792,7 +796,8 @@ async function saveCustos(){
     .map(r=>({nome:(r.nome||'').trim(), valor:brNum(r.valor)}));
   const rec={ faturamento_mes:brNum($('#c_fat').value), custos_fixos:brNum($('#c_fix').value),
     custos_fixos_itens:itens,
-    custos_variaveis:brNum($('#c_var').value), custo_fidc_pct:parseFloat($('#c_fidc').value)||0 };
+    custos_variaveis:brNum($('#c_var').value), custo_fidc_pct:parseFloat($('#c_fidc').value)||0,
+    comissao_pct:parseFloat($('#c_comis').value)||0 };
   const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
   if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
   await loadConfig(); renderFormacao(); toast('Custos atualizados','ok'); logAcao('config_custos');
