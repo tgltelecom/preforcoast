@@ -331,6 +331,18 @@ function go(sec,e){
   else if(sec==='config') renderConfig();
 }
 
+/* ------------------------------------------------------------
+   Busca sem perder o foco: re-renderiza e devolve o foco/cursor
+   para o novo campo de busca (o render recria o input).
+   ------------------------------------------------------------ */
+function onSearch(el, key, renderFn){
+  const pos = el.selectionStart;
+  S.search[key] = el.value;
+  renderFn();
+  const ni = document.getElementById('searchBox_'+key);
+  if(ni){ ni.focus(); try{ ni.setSelectionRange(pos,pos); }catch(e){} }
+}
+
 /* ============================================================
    TELA: CADASTROS
    ============================================================ */
@@ -341,8 +353,8 @@ function renderCadastros(){
     <div class="page-head">
       <h2>Cadastro de Produtos</h2><div class="spacer"></div>
       <div class="search"><span class="ic">🔍</span>
-        <input placeholder="Buscar produto..." value="${esc(S.search.cadastros)}"
-          oninput="S.search.cadastros=this.value;renderCadastros();this.focus()"></div>
+        <input id="searchBox_cadastros" placeholder="Buscar produto..." value="${esc(S.search.cadastros)}"
+          oninput="onSearch(this,'cadastros',renderCadastros)"></div>
       <button class="btn sm" onclick="openProduto()">+ Novo produto</button>
     </div>
     <div class="card" style="padding:0">
@@ -541,8 +553,8 @@ function renderTabela(){
     <div class="page-head">
       <h2>Tabela de Preços</h2><div class="spacer"></div>
       <div class="search"><span class="ic">🔍</span>
-        <input placeholder="Buscar produto..." value="${esc(S.search.tabela)}"
-          oninput="S.search.tabela=this.value;renderTabela();this.focus()"></div>
+        <input id="searchBox_tabela" placeholder="Buscar produto..." value="${esc(S.search.tabela)}"
+          oninput="onSearch(this,'tabela',renderTabela)"></div>
     </div>
     <div class="card">
       <label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:8px">Regime tributário do cliente</label>
@@ -589,8 +601,8 @@ function subPrecificar(){
   $('#subview').innerHTML=`
     <div class="page-head">
       <div class="search"><span class="ic">🔍</span>
-        <input placeholder="Buscar produto..." value="${esc(S.search.precificar)}"
-          oninput="S.search.precificar=this.value;subPrecificar();this.focus()"></div>
+        <input id="searchBox_precificar" placeholder="Buscar produto..." value="${esc(S.search.precificar)}"
+          oninput="onSearch(this,'precificar',subPrecificar)"></div>
       <div class="spacer"></div>
       <div class="hint" style="margin:0">Uma linha por produto + bitola. Cada bitola é precificada separadamente.</div>
     </div>
