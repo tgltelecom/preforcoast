@@ -133,6 +133,15 @@
   .breakdown b{color:var(--azul)}
   .breakdown .lin{display:flex;justify-content:space-between;padding:3px 0}
   .breakdown .lin.total{border-top:1px dashed #a9c7e6;margin-top:6px;padding-top:8px;font-weight:700}
+  .breakdown table.bd{width:100%;border-collapse:collapse;margin-top:8px}
+  .breakdown table.bd th,.breakdown table.bd td{padding:5px 8px;font-size:13px;vertical-align:top}
+  .breakdown table.bd thead th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.02em;border-bottom:1px solid #cfe0f2}
+  .breakdown table.bd .num{text-align:right;white-space:nowrap}
+  .breakdown table.bd tbody tr td{border-top:1px solid #dce8f5}
+  .breakdown table.bd tr.vv td{background:#ffffff9c;font-weight:600}
+  .breakdown table.bd tr.tot td{border-top:2px solid #a9c7e6;font-weight:700}
+  .breakdown table.bd tr.sep td{border-top:2px solid #a9c7e6}
+  .breakdown table.bd col.cprov{background:#eef7f0}
 
   .stat{background:#fff;border:1px solid var(--borda);border-radius:10px;padding:14px 16px}
   .stat .lbl{font-size:12px;color:var(--muted);font-weight:600}
@@ -292,21 +301,34 @@ async function startApp(){
 async function loadAll(){
   await Promise.all([loadProdutos(), loadPrecos(), loadConfig(), loadMP()]);
 }
+// Busca TODAS as linhas, driblando o limite de 1000 do Supabase (paginação por range)
+async function fetchAll(table, order){
+  const pageSize=1000; let from=0, all=[];
+  for(;;){
+    let q=sb.from(table).select('*').range(from, from+pageSize-1);
+    if(order) q=q.order(order);
+    const {data,error}=await q;
+    if(error) throw error;
+    all=all.concat(data||[]);
+    if(!data || data.length<pageSize) break;
+    from+=pageSize;
+  }
+  return all;
+}
 async function loadMP(){
-  const {data,error}=await sb.from('materia_prima_custos').select('*').order('material').order('bitola');
-  if(error){ S.mpcustos=[]; return; }
-  S.mpcustos=data||[];
+  try{ S.mpcustos=await fetchAll('materia_prima_custos','material'); }
+  catch(e){ /* erro passageiro: mantém o que já estava carregado */ }
 }
 async function loadProdutos(){
-  const {data,error}=await sb.from('produtos').select('*').order('descricao');
-  if(error){ toast('Erro ao carregar produtos','err'); return; }
-  S.produtos=data||[];
+  try{ S.produtos=await fetchAll('produtos','descricao'); }
+  catch(e){ toast('Erro ao carregar produtos (mantendo dados atuais)','err'); }
 }
 async function loadPrecos(){
-  const {data,error}=await sb.from('precificacoes').select('*');
-  if(error) return;
-  S.precos={}; S.precosArr=data||[];
-  (data||[]).forEach(p=>{ S.precos[chavePreco(p.produto_id,p.bitola)]=p; });
+  try{
+    const data=await fetchAll('precificacoes');
+    S.precos={}; S.precosArr=data;
+    data.forEach(p=>{ S.precos[chavePreco(p.produto_id,p.bitola)]=p; });
+  }catch(e){ /* mantém preços atuais */ }
 }
 // chave única de precificação por produto + bitola
 function chavePreco(pid, bitola){ return pid+'::'+normBit(bitola); }
@@ -315,8 +337,9 @@ function precosDoProduto(pid){ return (S.precosArr||[]).filter(p=>p.produto_id==
 function matLabel(mp){ return mp==='Aluminio'?'Alumínio':(mp==='Aco'?'Aço':'—'); }
 function matTag(mp){ return mp==='Aluminio'?'<span class="tag alu">Alumínio</span>':(mp==='Aco'?'<span class="tag aco">Aço</span>':'—'); }
 async function loadConfig(){
-  const {data}=await sb.from('configuracoes').select('*').eq('id',1).single();
-  S.config=data||{};
+  const {data,error}=await sb.from('configuracoes').select('*').eq('id',1).single();
+  if(!error && data) S.config=data;   // erro passageiro: mantém config atual
+  else if(!S.config) S.config={};
 }
 
 /* ============================================================
@@ -699,47 +722,53 @@ function drawBreakdown(){
   const comisPct=(Number(cfg.comissao_pct)||0)/100;
   const icms=$('#p_icms')?.value||'18';
   const taxPct=TAX[icms];
-  const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vComis=V*comisPct, vImp=V*taxPct;
-  const sobra=V-vFixo-vVar-vFidc-vComis-vImp;
+  const Vp=window._precCtx.valEditP||0;
+  const sobra =V -V*frFixo -V*frVar -V*fidcPct -V*comisPct -V*taxPct;
+  const sobraP=Vp-Vp*frFixo-Vp*frVar-Vp*fidcPct-Vp*comisPct-Vp*taxPct;
   const prod = S.produtos.find(x=>x.id===window._precCtx.pid);
   const pname = prod?.descricao||'';
   const bitSel = window._precCtx.bitola||'';
   const peso = brNum($('#p_peso')?.value);
   const custoKg = custoKgMP(prod?.materia_prima, bitSel);
   const custoMP = custoKg!=null ? custoKg*peso : null;
-  const lucro = custoMP!=null ? sobra - custoMP : null;
-  const lucroPct = (lucro!=null && V>0) ? (lucro/V*100) : null;
+  const lucro  = custoMP!=null ? sobra  - custoMP : null;
+  const lucroP = custoMP!=null ? sobraP - custoMP : null;
+  const lucroPct  = (lucro!=null  && V>0)  ? (lucro /V *100) : null;
+  const lucroPctP = (lucroP!=null && Vp>0) ? (lucroP/Vp*100) : null;
   const matLbl = prod?.materia_prima==='Aluminio'?'Alumínio':(prod?.materia_prima==='Aco'?'Aço':'—');
-  let mpHtml;
+  const clr=x=> x>=0?'var(--verde)':'var(--vermelho)';
+  const pct=f=>`<small style="color:var(--muted)">(${fmtN(f*100,1)}%)</small>`;
+  const row=(lbl,d,p)=>`<tr><td>${lbl}</td><td class="num">${fmtBRL(d)}</td><td class="num">${fmtBRL(p)}</td></tr>`;
+  let mpRows;
   if(custoKg!=null){
-    mpHtml=`
-    <div class="lin"><span>Valor do Kg da MP (líquido)</span><span>${fmtBRL(custoKg)}</span></div>
-    <div class="lin"><span>Valor de custo da MP (peso × kg)</span><span>${fmtBRL(custoMP)}</span></div>
-    <div class="lin total"><span>Lucro da operação (Distribuidor)</span><span style="color:${lucro>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucro)} <small style="color:var(--muted)">(${fmtN(lucroPct,1)}% sobre a venda)</small></span></div>`;
+    mpRows=`
+    <tr class="sep"><td>Custo da MP (peso × kg)</td><td class="num">${fmtBRL(custoMP)}</td><td class="num">${fmtBRL(custoMP)}</td></tr>
+    <tr class="tot"><td>Lucro da operação</td>
+      <td class="num" style="color:${clr(lucro)}">${fmtBRL(lucro)}<br><small style="color:var(--muted)">${fmtN(lucroPct,1)}%</small></td>
+      <td class="num" style="color:${clr(lucroP)}">${fmtBRL(lucroP)}<br><small style="color:var(--muted)">${fmtN(lucroPctP,1)}%</small></td></tr>`;
   } else {
-    mpHtml=`<div class="hint" style="margin-top:8px">⚠ Cadastre o custo da bitola <b>${esc(bitSel||'—')}</b> (${matLbl}) na aba <b>Custo de Matéria-Prima</b> para ver o custo da MP e o lucro da operação.</div>`;
+    mpRows=`<tr class="sep"><td colspan="3"><div class="hint" style="margin:2px 0">⚠ Cadastre o custo da bitola <b>${esc(bitSel||'—')}</b> (${matLbl}) na aba <b>Custo de Matéria-Prima</b> para ver o custo da MP e o lucro da operação.</div></td></tr>`;
   }
-  // Lucro do canal Provedor (mesmos fatores, aplicados sobre o valor de venda de provedor)
-  const Vp=window._precCtx.valEditP||0;
-  const sobraP=Vp-Vp*frFixo-Vp*frVar-Vp*fidcPct-Vp*comisPct-Vp*taxPct;
-  const lucroP=custoMP!=null? sobraP-custoMP : null;
-  const lucroPctP=(lucroP!=null && Vp>0)? lucroP/Vp*100 : null;
-  const provHtml = custoMP!=null ? `<div class="breakdown" style="margin-top:12px;background:#eef7f0;border-color:#bfe3cb">
-    <div class="lin"><span>Provedor — valor de venda</span><span><b>${fmtBRL(Vp)}</b></span></div>
-    <div class="lin"><span>Custo da MP (peso × kg)</span><span>${fmtBRL(custoMP)}</span></div>
-    <div class="lin total"><span>Lucro da operação (Provedor)</span><span style="color:${lucroP>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucroP)} <small style="color:var(--muted)">(${fmtN(lucroPctP,1)}% sobre a venda)</small></span></div>
-  </div>` : '';
   box.innerHTML=`<div class="breakdown">
-    Conforme o faturamento de <b>${fmtBRL(fat)}</b>, o produto <b>${esc(pname)}</b> terá um valor de venda (distribuidor) de <b>${fmtBRL(V)}</b>, onde:
-    <div class="lin"><span>Custos fixos</span><span>${fmtBRL(vFixo)} <small style="color:var(--muted)">(${fmtN(frFixo*100,1)}%)</small></span></div>
-    <div class="lin"><span>Custos variáveis</span><span>${fmtBRL(vVar)} <small style="color:var(--muted)">(${fmtN(frVar*100,1)}%)</small></span></div>
-    <div class="lin"><span>Antecipação FIDC</span><span>${fmtBRL(vFidc)} <small style="color:var(--muted)">(${fmtN(fidcPct*100,1)}%)</small></span></div>
-    <div class="lin"><span>Comissão</span><span>${fmtBRL(vComis)} <small style="color:var(--muted)">(${fmtN(comisPct*100,1)}%)</small></span></div>
-    <div class="lin"><span>Impostos (${icms==='simples'?'Simples 6%':'ICMS '+icms+'%'})</span><span>${fmtBRL(vImp)} <small style="color:var(--muted)">(${fmtN(taxPct*100,2)}%)</small></span></div>
-    <div class="lin total"><span>Margem restante</span><span style="color:${sobra>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(sobra)}</span></div>
-    ${mpHtml}
+    Rateio conforme faturamento de <b>${fmtBRL(fat)}</b> — <b>${esc(pname)}</b>:
+    <table class="bd">
+      <colgroup><col><col><col class="cprov"></colgroup>
+      <thead><tr><th></th><th class="num">Distribuidor</th><th class="num">Provedor</th></tr></thead>
+      <tbody>
+        <tr class="vv"><td>Valor de venda</td><td class="num">${fmtBRL(V)}</td><td class="num">${fmtBRL(Vp)}</td></tr>
+        ${row('Custos fixos '+pct(frFixo), V*frFixo, Vp*frFixo)}
+        ${row('Custos variáveis '+pct(frVar), V*frVar, Vp*frVar)}
+        ${row('Antecipação FIDC '+pct(fidcPct), V*fidcPct, Vp*fidcPct)}
+        ${row('Comissão '+pct(comisPct), V*comisPct, Vp*comisPct)}
+        ${row('Impostos ('+(icms==='simples'?'Simples 6%':'ICMS '+icms+'%')+') '+pct(taxPct), V*taxPct, Vp*taxPct)}
+        <tr class="tot"><td>Margem restante</td>
+          <td class="num" style="color:${clr(sobra)}">${fmtBRL(sobra)}</td>
+          <td class="num" style="color:${clr(sobraP)}">${fmtBRL(sobraP)}</td></tr>
+        ${mpRows}
+      </tbody>
+    </table>
     ${fat<=0?'<div class="hint" style="margin-top:8px">⚠ Defina o faturamento e custos na aba <b>Custos Fixos e Variáveis</b> para o rateio.</div>':''}
-  </div>${provHtml}`;
+  </div>`;
 }
 async function savePrecificacao(pid){
   const peso=currentPeso();
