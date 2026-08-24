@@ -934,6 +934,15 @@ function subCustoMP(){
   window._mpEdit = (S.mpcustos||[]).map(r=>JSON.parse(JSON.stringify(r)));
   window._mpRemovidos = [];
   renderMP();
+  // auto-recarrega do banco ao abrir a aba, caso a lista tenha vindo vazia por algum erro passageiro
+  if(!(S.mpcustos && S.mpcustos.length)){
+    loadMP().then(()=>{
+      if(S.mpcustos && S.mpcustos.length){
+        window._mpEdit=(S.mpcustos||[]).map(r=>JSON.parse(JSON.stringify(r)));
+        window._mpRemovidos=[]; renderMP();
+      }
+    });
+  }
 }
 function renderMP(){
   $('#subview').innerHTML=`
