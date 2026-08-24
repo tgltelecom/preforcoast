@@ -528,8 +528,8 @@ function renderTabela(){
           oninput="S.search.tabela=this.value;renderTabela();this.focus()"></div>
     </div>
     <div class="card">
-      <label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:8px">Tipo de cliente</label>
-      <div class="pills">${CLIENTES.map(c=>`<button class="pill ${S.clientType===c.k?'active':''}" onclick="S.clientType='${c.k}';renderTabela()">${c.lbl}${(descontoCliente(c.k)>0)?` · -${fmtN(descontoCliente(c.k),1)}%`:''}</button>`).join('')}</div>
+      <label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:8px">Regime tributário do cliente</label>
+      <div class="pills">${CLIENTES.map(c=>`<button class="pill ${S.clientType===c.k?'active':''}" onclick="S.clientType='${c.k}';renderTabela()">${c.lbl}</button>`).join('')}</div>
     </div>
     <div class="card" style="padding:0">
       <table>
@@ -686,10 +686,20 @@ function drawBreakdown(){
     mpHtml=`
     <div class="lin"><span>Valor do Kg da MP (líquido)</span><span>${fmtBRL(custoKg)}</span></div>
     <div class="lin"><span>Valor de custo da MP (peso × kg)</span><span>${fmtBRL(custoMP)}</span></div>
-    <div class="lin total"><span>Lucro da operação</span><span style="color:${lucro>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucro)} <small style="color:var(--muted)">(${fmtN(lucroPct,1)}% sobre a venda)</small></span></div>`;
+    <div class="lin total"><span>Lucro da operação (Distribuidor)</span><span style="color:${lucro>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucro)} <small style="color:var(--muted)">(${fmtN(lucroPct,1)}% sobre a venda)</small></span></div>`;
   } else {
     mpHtml=`<div class="hint" style="margin-top:8px">⚠ Cadastre o custo da bitola <b>${esc(bitSel||'—')}</b> (${matLbl}) na aba <b>Custo de Matéria-Prima</b> para ver o custo da MP e o lucro da operação.</div>`;
   }
+  // Lucro do canal Provedor (mesmos fatores, aplicados sobre o valor de venda de provedor)
+  const Vp=window._precCtx.valEditP||0;
+  const sobraP=Vp-Vp*frFixo-Vp*frVar-Vp*fidcPct-Vp*comisPct-Vp*taxPct;
+  const lucroP=custoMP!=null? sobraP-custoMP : null;
+  const lucroPctP=(lucroP!=null && Vp>0)? lucroP/Vp*100 : null;
+  const provHtml = custoMP!=null ? `<div class="breakdown" style="margin-top:12px;background:#eef7f0;border-color:#bfe3cb">
+    <div class="lin"><span>Provedor — valor de venda</span><span><b>${fmtBRL(Vp)}</b></span></div>
+    <div class="lin"><span>Custo da MP (peso × kg)</span><span>${fmtBRL(custoMP)}</span></div>
+    <div class="lin total"><span>Lucro da operação (Provedor)</span><span style="color:${lucroP>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(lucroP)} <small style="color:var(--muted)">(${fmtN(lucroPctP,1)}% sobre a venda)</small></span></div>
+  </div>` : '';
   box.innerHTML=`<div class="breakdown">
     Conforme o faturamento de <b>${fmtBRL(fat)}</b>, o produto <b>${esc(pname)}</b> terá um valor de venda (distribuidor) de <b>${fmtBRL(V)}</b>, onde:
     <div class="lin"><span>Custos fixos</span><span>${fmtBRL(vFixo)} <small style="color:var(--muted)">(${fmtN(frFixo*100,1)}%)</small></span></div>
@@ -700,7 +710,7 @@ function drawBreakdown(){
     <div class="lin total"><span>Margem restante</span><span style="color:${sobra>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(sobra)}</span></div>
     ${mpHtml}
     ${fat<=0?'<div class="hint" style="margin-top:8px">⚠ Defina o faturamento e custos na aba <b>Custos Fixos e Variáveis</b> para o rateio.</div>':''}
-  </div>`;
+  </div>${provHtml}`;
 }
 async function savePrecificacao(pid){
   const peso=currentPeso();
