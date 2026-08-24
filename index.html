@@ -1006,8 +1006,9 @@ async function saveMP(){
   for(const r of rows){ const k=r.material+'|'+normBit(r.bitola); if(chaves.has(k)){ toast('Bitola repetida em '+(r.material==='Aluminio'?'Alumínio':'Aço')+': '+r.bitola,'err'); return; } chaves.add(k); }
   // remove os excluídos
   if(window._mpRemovidos.length){ await sb.from('materia_prima_custos').delete().in('id',window._mpRemovidos); }
-  // upsert
-  const payload=rows.map(r=>({ ...(r.id?{id:r.id}:{}), material:r.material, bitola:r.bitola.trim(), preco_bruto:brNum(r.preco_bruto),
+  // upsert por (material,bitola) — NÃO enviar id: linhas existentes atualizam pela chave
+  // e linhas novas recebem id automático do banco (evita "null value in column id")
+  const payload=rows.map(r=>({ material:r.material, bitola:r.bitola.trim(), preco_bruto:brNum(r.preco_bruto),
     icms_pct:Number(r.icms_pct)||0, icms_credita:!!r.icms_credita, ipi_pct:Number(r.ipi_pct)||0, ipi_credita:!!r.ipi_credita,
     pis_pct:Number(r.pis_pct)||0, pis_credita:!!r.pis_credita, cofins_pct:Number(r.cofins_pct)||0, cofins_credita:!!r.cofins_credita,
     updated_by:S.user.email }));
