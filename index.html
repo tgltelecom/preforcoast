@@ -660,7 +660,8 @@ function openPrecificar(pid, bitola){
   const padrao = variaveisPorMateria(p.materia_prima);
   const vd = pr?pr.variavel_distribuidor : (padrao.dist||0);
   const vp = pr?pr.variavel_provedor : (padrao.prov||0);
-  window._precCtx={pid, bitola, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18'};
+  window._precCtx={pid, bitola, valEditD:pr?pr.valor_distribuidor:null, valEditP:pr?pr.valor_provedor:null, icms:pr?.icms_flag||'18',
+    aba:'nacional', cotacaoDolar:Number((S.config||{}).cotacao_dolar)||0, valExp:null};
   const bitField = bitola
     ? `<input readonly value="${esc(bitola)}">`
     : `<input id="p_bit_txt" value="" placeholder="ex: 1,80mm" oninput="window._precCtx.bitola=this.value;drawBreakdown()">`;
@@ -691,6 +692,16 @@ function openPrecificar(pid, bitola){
         <div class="inline-prefix"><span>R$</span><input id="p_rp" onkeyup="maskBRL(this);window._precCtx.valEditP=brNum(this.value);drawBreakdown()"></div></div>
     </div>
     <div class="hint">Variáveis puxadas automaticamente da matéria prima <b>${matLabel(p.materia_prima)}</b>. Resultado = Variável × Peso. Você pode ajustar o valor final sem alterar as variáveis padrão.</div>
+    <div class="subtabs" style="margin-top:14px">
+      <button id="abaNac" type="button" class="active" onclick="setPrecAba('nacional')">Nacional</button>
+      <button id="abaExp" type="button" onclick="setPrecAba('exportacao')">Exportação</button>
+    </div>
+    <div id="expCtrls" style="display:none;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 6px">
+      <div class="fld"><label>Cotação do dólar (US$ 1 = R$)</label>
+        <div class="inline-prefix"><span>R$</span><input id="p_dolar" value="${window._precCtx.cotacaoDolar?fmtN(window._precCtx.cotacaoDolar):''}" placeholder="ex: 5,20" onkeyup="maskBRL(this);window._precCtx.cotacaoDolar=brNum(this.value);drawBreakdown()" onchange="salvarCotacao(brNum(this.value))"></div></div>
+      <div class="fld"><label>Valor de venda exportação (R$) <small style="color:var(--muted)">— em branco usa o valor Distribuidor</small></label>
+        <div class="inline-prefix"><span>R$</span><input id="p_vexp" placeholder="opcional" onkeyup="maskBRL(this);window._precCtx.valExp=this.value.trim()?brNum(this.value):null;drawBreakdown()"></div></div>
+    </div>
     <div id="breakdown"></div>
   `, [
     {txt:'Cancelar',cls:'ghost',fn:closeModal},
@@ -711,7 +722,70 @@ function recalc(){
   drawBreakdown();
 }
 const TAX={'18':0.2725,'12':0.2125,'7':0.1625,'simples':0.06};
+function setPrecAba(aba){
+  window._precCtx.aba=aba;
+  const bn=$('#abaNac'), be=$('#abaExp'), ec=$('#expCtrls');
+  if(bn) bn.classList.toggle('active', aba==='nacional');
+  if(be) be.classList.toggle('active', aba==='exportacao');
+  if(ec) ec.style.display = (aba==='exportacao') ? 'grid' : 'none';
+  drawBreakdown();
+}
+async function salvarCotacao(v){
+  try{ await sb.from('configuracoes').update({cotacao_dolar:v}).eq('id',1); if(S.config) S.config.cotacao_dolar=v; }catch(e){}
+}
+function drawBreakdownExport(){
+  const box=$('#breakdown'); if(!box) return;
+  const cfg=S.config||{};
+  const dol=window._precCtx.cotacaoDolar||0;
+  const V=(window._precCtx.valExp!=null? window._precCtx.valExp : (window._precCtx.valEditD||0));
+  const fat=Number(cfg.faturamento_mes)||0;
+  const frFixo=fat>0?(Number(cfg.custos_fixos)||0)/fat:0;
+  const frVar =fat>0?(Number(cfg.custos_variaveis)||0)/fat:0;
+  const fidcPct=(Number(cfg.custo_fidc_pct)||0)/100;
+  const comisPct=(Number(cfg.comissao_pct)||0)/100;
+  const vFixo=V*frFixo, vVar=V*frVar, vFidc=V*fidcPct, vComis=V*comisPct; // exportação: SEM impostos
+  const sobra=V-vFixo-vVar-vFidc-vComis;
+  const prod=S.produtos.find(x=>x.id===window._precCtx.pid);
+  const bitSel=window._precCtx.bitola||'';
+  const peso=brNum($('#p_peso')?.value);
+  const custoKg=custoKgMP(prod?.materia_prima,bitSel);
+  const custoMP=custoKg!=null?custoKg*peso:null;
+  const lucro=custoMP!=null?sobra-custoMP:null;
+  const lucroPct=(lucro!=null&&V>0)?lucro/V*100:null;
+  const clr=x=>x>=0?'var(--verde)':'var(--vermelho)';
+  const pct=f=>`<small style="color:var(--muted)">(${fmtN(f*100,1)}%)</small>`;
+  const usd=v=> dol>0 ? ('US$ '+fmtN(v/dol,2)) : '—';
+  const row=(lbl,val)=>`<tr><td>${lbl}</td><td class="num">${fmtBRL(val)}</td><td class="num">${usd(val)}</td></tr>`;
+  let mpRows;
+  if(custoKg!=null){
+    mpRows=`<tr class="sep"><td>Custo da MP (peso × kg)</td><td class="num">${fmtBRL(custoMP)}</td><td class="num">${usd(custoMP)}</td></tr>
+      <tr class="tot"><td>Lucro da operação</td>
+        <td class="num" style="color:${clr(lucro)}">${fmtBRL(lucro)}<br><small style="color:var(--muted)">${fmtN(lucroPct,1)}%</small></td>
+        <td class="num" style="color:${clr(lucro)}">${usd(lucro)}</td></tr>`;
+  } else {
+    mpRows=`<tr class="sep"><td colspan="3"><div class="hint" style="margin:2px 0">⚠ Cadastre o custo da bitola <b>${esc(bitSel||'—')}</b> na aba <b>Custo de Matéria-Prima</b> para ver o lucro.</div></td></tr>`;
+  }
+  box.innerHTML=`<div class="breakdown" style="background:#fff7ed;border-color:#f6d9b0">
+    <b>Exportação</b> — venda isenta de impostos (ICMS, IPI, PIS/COFINS). ${dol>0?`Cotação: <b>US$ 1 = ${fmtBRL(dol)}</b>`:'<span style="color:var(--vermelho)">Informe a cotação do dólar acima para ver a coluna em US$.</span>'}
+    <table class="bd">
+      <colgroup><col><col><col class="cprov"></colgroup>
+      <thead><tr><th></th><th class="num">R$</th><th class="num">US$</th></tr></thead>
+      <tbody>
+        <tr class="vv"><td>Valor de venda</td><td class="num">${fmtBRL(V)}</td><td class="num">${usd(V)}</td></tr>
+        ${row('Custos fixos '+pct(frFixo), vFixo)}
+        ${row('Custos variáveis '+pct(frVar), vVar)}
+        ${row('Antecipação FIDC '+pct(fidcPct), vFidc)}
+        ${row('Comissão '+pct(comisPct), vComis)}
+        <tr><td>Impostos <small style="color:var(--verde)">(isento)</small></td><td class="num">${fmtBRL(0)}</td><td class="num">${dol>0?'US$ 0,00':'—'}</td></tr>
+        <tr class="tot"><td>Margem restante</td><td class="num" style="color:${clr(sobra)}">${fmtBRL(sobra)}</td><td class="num" style="color:${clr(sobra)}">${usd(sobra)}</td></tr>
+        ${mpRows}
+      </tbody>
+    </table>
+    ${fat<=0?'<div class="hint" style="margin-top:8px">⚠ Defina o faturamento e custos na aba <b>Custos Fixos e Variáveis</b> para o rateio.</div>':''}
+  </div>`;
+}
 function drawBreakdown(){
+  if(window._precCtx && window._precCtx.aba==='exportacao') return drawBreakdownExport();
   const box=$('#breakdown'); if(!box) return;
   const cfg=S.config||{};
   const V=window._precCtx.valEditD||0; // rateio sobre o valor de distribuidor
