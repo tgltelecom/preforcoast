@@ -1439,8 +1439,15 @@ function imprimirProposta(){
       <tr><td class="l">Lucro do pedido</td><td class="r l" style="color:${clr(r.lucro)}">${fmtBRL(r.lucro)} (${fmtN(r.lucroPct,1)}%)</td></tr>
       ${r.ipiPct>0?`<tr><td>IPI (${pctL(r.ipiPct)})</td><td class="r">${fmtBRL(r.ipiVal)}</td></tr><tr><td class="l">Total da nota (c/ IPI)</td><td class="r l">${fmtBRL(r.totalNota)}</td></tr>`:''}
     </table></div></body></html>`;
-  const w=window.open('','_blank'); if(!w){ toast('Permita pop-ups para imprimir','err'); return; }
-  w.document.write(html); w.document.close(); w.focus();
+  // imprime via iframe oculto (mais confiável que window.open — evita impressão em branco)
+  let ifr=document.getElementById('printFrame'); if(ifr) ifr.remove();
+  ifr=document.createElement('iframe'); ifr.id='printFrame';
+  ifr.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(ifr);
+  const d=ifr.contentWindow.document; d.open(); d.write(html); d.close();
+  const go=()=>{ try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }catch(e){ toast('Não foi possível abrir a impressão','err'); } };
+  if(ifr.contentWindow.document.readyState==='complete') setTimeout(go,300);
+  else ifr.onload=()=>setTimeout(go,300);
 }
 /* ---- Cadastro rápido de produto (sem sair da proposta) ---- */
 function cadastroRapido(){
