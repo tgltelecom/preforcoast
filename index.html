@@ -724,7 +724,13 @@ function currentPeso(){ return brNum($('#p_peso')?.value); }
 function recalc(){
   const peso=currentPeso();
   const vd=brNum($('#p_vd')?.value), vp=brNum($('#p_vp')?.value);
-  const rd=vd*peso, rp=vp*peso;
+  let rd=vd*peso, rp=vp*peso;
+  // Preço sugerido: se não há variável (rd/rp=0), sugere pelo custo da MP + margem-alvo
+  const icmsS=$('#p_icms')?.value||'18'; const cargaS=TAX[icmsS]||0;
+  const fidcS=(Number((S.config||{}).custo_fidc_pct)||0)/100;
+  const prodS=S.produtos.find(x=>x.id===window._precCtx.pid);
+  if(!(rd>0)){ const s=precoSugerido(prodS&&prodS.materia_prima, window._precCtx.bitola, peso, 'distribuidor', cargaS, fidcS); if(s) rd=s.valor; }
+  if(!(rp>0)){ const s=precoSugerido(prodS&&prodS.materia_prima, window._precCtx.bitola, peso, 'provedor', cargaS, fidcS); if(s) rp=s.valor; }
   if(window._precCtx.valEditD==null){ $('#p_rd').value=fmtN(rd); window._precCtx.valEditD=rd; }
   if(window._precCtx.valEditP==null){ $('#p_rp').value=fmtN(rp); window._precCtx.valEditP=rp; }
   // se usuário não editou manualmente, acompanha o cálculo:
@@ -997,12 +1003,43 @@ function variaveisPorMateria(mp){
   if(mp==='Aluminio') return {dist:c.var_dist_alu||0, prov:c.var_prov_alu||0};
   return {dist:c.var_dist_aco||0, prov:c.var_prov_aco||0}; // Aço (padrão)
 }
+// ---- PREÇO SUGERIDO ----
+function margemAlvo(){ return (Number((S.config||{}).margem_alvo_pct)||20)/100; }
+function ratiosBaseConfig(){
+  const c=S.config||{}; const fat=Number(c.faturamento_mes)||0;
+  return { frFixo: fat>0?(Number(c.custos_fixos)||0)/fat:0,
+           frVar:  fat>0?(Number(c.custos_variaveis)||0)/fat:0,
+           comis:  (Number(c.comissao_pct)||0)/100 };
+}
+// Sugere um preço de venda. 1) Variável (R$/kg × peso) se houver. 2) senão custo MP + margem-alvo.
+// canal: 'distribuidor'|'provedor' ; carga=fração impostos ; fidc=fração FIDC. Retorna {valor, base} ou null.
+function precoSugerido(mp, bitola, peso, canal, carga, fidc){
+  peso=Number(peso)||0; if(peso<=0) return null;
+  const pv=variaveisPorMateria(mp);
+  const varKg = canal==='provedor' ? (Number(pv.prov)||0) : (Number(pv.dist)||0);
+  if(varKg>0) return {valor:varKg*peso, base:'variável'};
+  const custoKg=custoKgMP(mp,bitola);
+  if(custoKg!=null){
+    const r=ratiosBaseConfig();
+    const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - margemAlvo();
+    if(denom>0.02) return {valor:(custoKg*peso)/denom, base:'margem '+fmtN(margemAlvo()*100,0)+'%'};
+  }
+  return null;
+}
 // ---- Custo de Matéria-Prima ----
 const MP_IMPOSTOS=[['icms','ICMS'],['ipi','IPI'],['pis','PIS'],['cofins','COFINS']];
+// Mecânica tributária na compra:
+//  - IPI é "por fora": não vem embutido no preço; quando incorpora, SOMA ao custo; quando credita, é neutro (recuperado).
+//  - ICMS/PIS/COFINS são "por dentro": já embutidos no preço bruto; quando creditam, SUBTRAI (recupera); quando incorpora, é neutro (já está no preço).
+const MP_POR_FORA={ipi:true, icms:false, pis:false, cofins:false};
 function mpCustoLiquido(r){
-  const b=brNum(r.preco_bruto); let cred=0, cost=0;
-  MP_IMPOSTOS.forEach(([k])=>{ const pct=(Number(r[k+'_pct'])||0)/100; if(r[k+'_credita']) cred+=pct; else cost+=pct; });
-  return b*(1-cred+cost);
+  const b=brNum(r.preco_bruto); let fator=1;
+  MP_IMPOSTOS.forEach(([k])=>{
+    const pct=(Number(r[k+'_pct'])||0)/100; const credita=!!r[k+'_credita'];
+    if(MP_POR_FORA[k]){ if(!credita) fator+=pct; }   // por fora: soma só se incorporar
+    else { if(credita) fator-=pct; }                  // por dentro: subtrai só se creditar
+  });
+  return b*fator;
 }
 function normBit(s){ return String(s||'').toLowerCase().replace(/mm/g,'').replace(/\s/g,'').replace('.',',').trim(); }
 function custoKgMP(material, bitola){
@@ -1032,8 +1069,8 @@ function subCustoMP(){
 function renderMP(){
   $('#subview').innerHTML=`
     <div class="card">
-      <p style="margin:0 0 4px;color:var(--muted);font-size:13.5px">Cadastre o preço de compra (R$/kg) por <b>bitola</b> de cada matéria-prima e os impostos de compra. Em cada imposto escolha <b>Creditar</b> (desconta do custo) ou <b>Incorporar</b> (soma ao custo). O <b>custo líquido</b> é usado no cálculo do lucro na precificação.</p>
-      <div class="hint" style="margin-bottom:14px">Custo líquido = Preço bruto − (impostos que creditam) + (impostos que incorporam).</div>
+      <p style="margin:0 0 4px;color:var(--muted);font-size:13.5px">Cadastre o preço de compra (R$/kg) por <b>bitola</b> de cada matéria-prima e os impostos de compra. Em cada imposto escolha <b>Creditar</b> (recupera) ou <b>Incorporar</b> (fica no custo). O <b>custo líquido</b> é usado no cálculo do lucro na precificação.</p>
+      <div class="hint" style="margin-bottom:14px">ICMS/PIS/COFINS são <b>por dentro</b> (já embutidos no preço bruto): creditar <b>subtrai</b>, incorporar não altera. IPI é <b>por fora</b>: incorporar <b>soma</b> ao custo, creditar não altera.</div>
       ${blocoMP('Aco','Aço')}
       ${blocoMP('Aluminio','Alumínio')}
       <div style="margin-top:18px"><button class="btn sm" onclick="saveMP()">Salvar custos de MP</button></div>
@@ -1043,45 +1080,60 @@ function blocoMP(mat, label){
   const linhas=window._mpEdit.filter(r=>r.material===mat);
   const tagc = mat==='Aluminio'?'alu':'aco';
   return `
-    <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px"><span class="tag ${tagc}">${label}</span></div>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr>
-        <th>Bitola</th><th class="num">Preço bruto (R$/kg)</th>
-        <th>ICMS</th><th>IPI</th><th>PIS</th><th>COFINS</th>
-        <th class="num">Custo líq. (R$/kg)</th><th></th>
-      </tr></thead>
-      <tbody>
-      ${linhas.length? linhas.map(r=>linhaMP(r)).join('') : `<tr><td colspan="8"><div class="empty">Nenhuma bitola de ${label}. Adicione abaixo.</div></td></tr>`}
-      </tbody>
-    </table>
+    <div style="display:flex;align-items:center;gap:8px;margin:18px 0 10px"><span class="tag ${tagc}">${label}</span></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${linhas.length? linhas.map(r=>linhaMP(r)).join('') : `<div class="empty" style="border:1px dashed var(--borda);border-radius:10px">Nenhuma bitola de ${label}. Adicione abaixo.</div>`}
     </div>
-    <button class="btn ghost" style="margin-top:8px" onclick="addMP('${mat}')">+ Adicionar bitola de ${label}</button>`;
+    <button class="btn ghost" style="margin-top:10px" onclick="addMP('${mat}')">+ Adicionar bitola de ${label}</button>`;
 }
-function impostoCell(r, k){
+function impostoCell(r, k, label){
   const idx=window._mpEdit.indexOf(r);
-  return `<div style="display:flex;flex-direction:column;gap:4px;min-width:118px">
-    <div class="inline-prefix"><input style="padding-left:9px" value="${r[k+'_pct']!=null?String(r[k+'_pct']).replace('.',','):''}" placeholder="%" oninput="window._mpEdit[${idx}]['${k}_pct']=brNum(this.value);mpRecalcLinha(${idx})">
+  const fora=MP_POR_FORA[k];
+  return `<div style="background:#f7f9fc;border:1px solid var(--borda);border-radius:9px;padding:8px 10px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
+      <span style="font-size:12px;font-weight:600;color:#4a5560">${label}</span>
+      <span style="font-size:10px;color:var(--muted)">${fora?'por fora':'por dentro'}</span>
     </div>
-    <select style="padding:5px 6px;border:1px solid var(--borda);border-radius:6px;font-size:12px" onchange="window._mpEdit[${idx}]['${k}_credita']=(this.value==='1');mpRecalcLinha(${idx})">
-      <option value="1" ${r[k+'_credita']?'selected':''}>Creditar (−)</option>
-      <option value="0" ${!r[k+'_credita']?'selected':''}>Incorporar (+)</option>
-    </select></div>`;
+    <div style="display:flex;gap:6px;align-items:center">
+      <div class="inline-prefix" style="flex:0 0 66px"><input style="padding-left:9px;width:66px;text-align:right" value="${r[k+'_pct']!=null?String(r[k+'_pct']).replace('.',','):''}" placeholder="%" oninput="window._mpEdit[${idx}]['${k}_pct']=brNum(this.value);mpRecalcLinha(${idx})"></div>
+      <select style="flex:1;min-width:0;padding:7px 6px;border:1px solid var(--borda);border-radius:6px;font-size:12px" onchange="window._mpEdit[${idx}]['${k}_credita']=(this.value==='1');mpRecalcLinha(${idx})">
+        <option value="1" ${r[k+'_credita']?'selected':''}>Creditar (−)</option>
+        <option value="0" ${!r[k+'_credita']?'selected':''}>Incorporar (+)</option>
+      </select>
+    </div>
+  </div>`;
 }
 function linhaMP(r){
   const idx=window._mpEdit.indexOf(r);
-  return `<tr>
-    <td><input value="${esc(r.bitola||'')}" placeholder="ex: 1,68" style="padding:7px 9px;border:1px solid var(--borda);border-radius:6px;width:100px" onkeyup="maskNum(this,2);window._mpEdit[${idx}].bitola=this.value"></td>
-    <td class="num"><div class="inline-prefix" style="max-width:130px"><span>R$</span><input value="${fmtN(r.preco_bruto||0)}" onkeyup="maskBRL(this);window._mpEdit[${idx}].preco_bruto=brNum(this.value);mpRecalcLinha(${idx})" style="padding-left:30px;width:130px"></div></td>
-    <td>${impostoCell(r,'icms')}</td>
-    <td>${impostoCell(r,'ipi')}</td>
-    <td>${impostoCell(r,'pis')}</td>
-    <td>${impostoCell(r,'cofins')}</td>
-    <td class="num" id="mpliq_${idx}"><b>${fmtBRL(mpCustoLiquido(r))}</b></td>
-    <td class="row-actions"><button class="del" onclick="delMP(${idx})">🗑️</button></td>
-  </tr>`;
+  return `<div style="border:1px solid var(--borda);border-radius:11px;padding:13px 14px;background:#fff">
+    <div style="display:flex;flex-wrap:wrap;gap:14px 18px;align-items:flex-end;justify-content:space-between">
+      <div style="display:flex;flex-wrap:wrap;gap:14px 18px;align-items:flex-end">
+        <div>
+          <label style="display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px">Bitola</label>
+          <input value="${esc(r.bitola||'')}" placeholder="ex: 1,68" style="padding:8px 10px;border:1px solid var(--borda);border-radius:7px;width:110px" onkeyup="maskNum(this,2);window._mpEdit[${idx}].bitola=this.value">
+        </div>
+        <div>
+          <label style="display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px">Preço bruto (R$/kg)</label>
+          <div class="inline-prefix" style="width:140px"><span>R$</span><input value="${fmtN(r.preco_bruto||0)}" onkeyup="maskBRL(this);window._mpEdit[${idx}].preco_bruto=brNum(this.value);mpRecalcLinha(${idx})" style="padding-left:30px;width:140px;text-align:right"></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:14px">
+        <div style="text-align:right">
+          <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">Custo líq. (R$/kg)</div>
+          <div id="mpliq_${idx}" style="font-size:19px;font-weight:700;color:var(--azul)">${fmtBRL(mpCustoLiquido(r))}</div>
+        </div>
+        <div class="row-actions"><button class="del" onclick="delMP(${idx})" title="Remover">🗑️</button></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:12px">
+      ${impostoCell(r,'icms','ICMS')}
+      ${impostoCell(r,'ipi','IPI')}
+      ${impostoCell(r,'pis','PIS')}
+      ${impostoCell(r,'cofins','COFINS')}
+    </div>
+  </div>`;
 }
-function mpRecalcLinha(idx){ const el=$('#mpliq_'+idx); if(el) el.innerHTML='<b>'+fmtBRL(mpCustoLiquido(window._mpEdit[idx]))+'</b>'; }
+function mpRecalcLinha(idx){ const el=$('#mpliq_'+idx); if(el) el.textContent=fmtBRL(mpCustoLiquido(window._mpEdit[idx])); }
 function addMP(mat){ window._mpEdit.push(novaLinhaMP(mat)); renderMP(); }
 function delMP(idx){ const r=window._mpEdit[idx]; if(r && r.id) window._mpRemovidos.push(r.id); window._mpEdit.splice(idx,1); renderMP(); }
 async function saveMP(){
@@ -1218,16 +1270,36 @@ async function excluirProposta(id){
   await loadPropostas(); renderPropostas(); toast('Proposta excluída','ok');
 }
 function cancelarProposta(){ S.propostaEdit=null; renderPropostas(); }
+function cargaFidcProposta(){
+  const prop=S.propostaEdit||{};
+  const cod=icmsProposta(prop.cliente_uf, prop.regime);
+  const carga=cod?cargaProposta(cod).carga:0;
+  const fidc=fidcParcela(prop.parcelas, prop.fidcManual)/100;
+  return {carga, fidc};
+}
 function addItemProposta(pid){
   const p=S.produtos.find(x=>x.id===pid); if(!p) return;
   const bit=bitolaPrincipal(p)||'';
   const pesos=Array.isArray(p.pesos)?p.pesos:[];
   const peso=(pesos.find(x=>normBit(x.bitola)===normBit(bit))||{}).peso ?? '';
   const pr=precoDe(pid,bit);
-  const preco=pr?pr.valor_distribuidor:'';
+  let preco=pr?pr.valor_distribuidor:'';
+  if(!(Number(preco)>0)){ const cf=cargaFidcProposta(); const s=precoSugerido(p.materia_prima, bit, peso, 'distribuidor', cf.carga, cf.fidc); if(s) preco=s.valor; }
   S.propostaEdit.itens.push({produto_id:pid, codigo:p.codigo, descricao:p.descricao, materia_prima:p.materia_prima,
     bitola:bit, qtd:1, peso:peso, preco:preco});
   renderPropostas();
+}
+function sugerirPrecoItem(i){
+  const it=S.propostaEdit.itens[i]; if(!it) return;
+  const cf=cargaFidcProposta();
+  const s=precoSugerido(it.materia_prima, it.bitola, it.peso, 'distribuidor', cf.carga, cf.fidc);
+  if(s){ it.preco=s.valor; renderPropostas(); toast('Preço sugerido pela '+s.base,'ok'); }
+  else toast('Sem base p/ sugerir: cadastre a variável ou o custo de MP','err');
+}
+function sugerirTodosPrecos(){
+  const cf=cargaFidcProposta(); let n=0;
+  (S.propostaEdit.itens||[]).forEach(it=>{ const s=precoSugerido(it.materia_prima,it.bitola,it.peso,'distribuidor',cf.carga,cf.fidc); if(s){ it.preco=s.valor; n++; } });
+  renderPropostas(); toast(n?('Preços sugeridos em '+n+' item(ns)'):'Nada a sugerir (falta variável/custo)','ok');
 }
 function removerItemProp(i){ S.propostaEdit.itens.splice(i,1); renderPropostas(); }
 function addExtraProp(){ S.propostaEdit.extras.push({nome:'',valor:''}); renderPropostas(); }
@@ -1265,7 +1337,7 @@ function renderPropostaEditor(){
       <td>${bitField}</td>
       <td><input value="${it.qtd??''}" style="width:64px" oninput="propSet(${i},'qtd',this.value)"></td>
       <td><div class="inline-prefix" style="max-width:110px"><input id="it_peso_${i}" value="${it.peso!==''&&it.peso!=null?fmtN(it.peso,3):''}" style="width:92px" onkeyup="maskNum(this,3);propSet(${i},'peso',brNum(this.value))"></div></td>
-      <td><div class="inline-prefix" style="max-width:120px"><span>R$</span><input value="${it.preco!==''&&it.preco!=null?fmtN(it.preco):''}" style="padding-left:30px;width:110px" onkeyup="maskBRL(this);propSet(${i},'preco',brNum(this.value))"></div></td>
+      <td><div style="display:flex;gap:4px;align-items:center"><div class="inline-prefix" style="max-width:104px"><span>R$</span><input value="${it.preco!==''&&it.preco!=null?fmtN(it.preco):''}" style="padding-left:30px;width:96px" onkeyup="maskBRL(this);propSet(${i},'preco',brNum(this.value))"></div><button class="btn ghost sm" title="Sugerir preço" style="padding:4px 6px" onclick="sugerirPrecoItem(${i})">💡</button></div></td>
       <td class="num" id="it_rec_${i}">—</td>
       <td class="num" id="it_luc_${i}">—</td>
       <td class="row-actions"><button class="del" onclick="removerItemProp(${i})">🗑️</button></td>
@@ -1313,7 +1385,7 @@ function renderPropostaEditor(){
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 8px">Itens do pedido</h3>
+      <div style="display:flex;align-items:center;margin:0 0 8px"><h3 style="margin:0">Itens do pedido</h3><div style="flex:1"></div><button class="btn ghost sm" onclick="sugerirTodosPrecos()">💡 Sugerir preços</button></div>
       <div class="search" style="margin-bottom:10px"><span class="ic">🔍</span>
         <input id="searchBox_propItem" placeholder="Buscar produto para adicionar..." value="${esc(S.search.propItem||'')}" oninput="onSearch(this,'propItem',renderPropostas)" style="width:340px"></div>
       ${q?`<div class="card" style="padding:6px;margin-bottom:10px">
@@ -1530,7 +1602,9 @@ async function renderConfig(){
             ${UFS.map(u=>`<option ${c.uf_origem===u?'selected':''}>${u}</option>`).join('')}
           </select></div>
         <div class="fld"><label>ICMS interno (%) — vendas no mesmo estado</label><input id="icmsint" type="number" step="0.01" value="${c.icms_interno??18}"></div>
+        <div class="fld"><label>Margem-alvo (%) — para o preço sugerido</label><input id="margemalvo" type="number" step="0.01" value="${c.margem_alvo_pct??20}"></div>
       </div>
+      <p style="margin:8px 0 0;color:var(--muted);font-size:12.5px">A margem-alvo é usada para sugerir o preço quando não há Variável de Precificação cadastrada (preço = custo da MP + demais custos, mirando essa margem de lucro sobre a venda).</p>
       <div style="margin-top:16px"><button class="btn sm" onclick="saveFiscal()">Salvar dados fiscais</button></div>
     </div>
     <div class="card">
@@ -1565,7 +1639,8 @@ async function saveDescontos(){
   await loadConfig(); toast('Descontos atualizados','ok'); logAcao('config_descontos');
 }
 async function saveFiscal(){
-  const rec={ uf_origem: $('#uforigem').value || null, icms_interno: parseFloat($('#icmsint').value)||0 };
+  const rec={ uf_origem: $('#uforigem').value || null, icms_interno: parseFloat($('#icmsint').value)||0,
+    margem_alvo_pct: parseFloat($('#margemalvo').value)||0 };
   const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
   if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
   await loadConfig(); toast('Dados fiscais atualizados','ok'); logAcao('config_fiscal');
