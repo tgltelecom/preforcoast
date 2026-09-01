@@ -9,6 +9,8 @@
 <!--  Cliente Supabase                                             -->
 <!-- ============================================================ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}</script>
 
 <style>
   :root{
@@ -181,6 +183,7 @@
       <a href="#" data-sec="tabela" onclick="go('tabela',event)">Tabela de Preço</a>
       <a href="#" data-sec="formacao" onclick="go('formacao',event)">Formação de Preços</a>
       <a href="#" data-sec="propostas" onclick="go('propostas',event)">Propostas</a>
+      <a href="#" data-sec="importar" onclick="go('importar',event)">Importar Pedido</a>
       <a href="#" data-sec="config" onclick="go('config',event)">Configurações</a>
     </nav>
     <div class="user-box">
@@ -362,6 +365,7 @@ function go(sec,e){
   else if(sec==='tabela') renderTabela();
   else if(sec==='formacao') renderFormacao();
   else if(sec==='propostas') renderPropostas();
+  else if(sec==='importar') renderImportar();
   else if(sec==='config') renderConfig();
 }
 
@@ -1004,7 +1008,13 @@ function variaveisPorMateria(mp){
   return {dist:c.var_dist_aco||0, prov:c.var_prov_aco||0}; // Aço (padrão)
 }
 // ---- PREÇO SUGERIDO ----
-function margemAlvo(){ return (Number((S.config||{}).margem_alvo_pct)||20)/100; }
+function margemAlvo(){ return margemAlvoCanal('distribuidor'); }
+// Lucratividade-alvo por canal (distribuidor x provedor). Provedor cai para o valor de distribuidor se não configurado.
+function margemAlvoCanal(canal){
+  const c=S.config||{};
+  if(canal==='provedor') return (Number(c.margem_alvo_prov_pct)||Number(c.margem_alvo_pct)||20)/100;
+  return (Number(c.margem_alvo_pct)||20)/100;
+}
 function ratiosBaseConfig(){
   const c=S.config||{}; const fat=Number(c.faturamento_mes)||0;
   return { frFixo: fat>0?(Number(c.custos_fixos)||0)/fat:0,
@@ -1020,9 +1030,9 @@ function precoSugerido(mp, bitola, peso, canal, carga, fidc){
   if(varKg>0) return {valor:varKg*peso, base:'variável'};
   const custoKg=custoKgMP(mp,bitola);
   if(custoKg!=null){
-    const r=ratiosBaseConfig();
-    const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - margemAlvo();
-    if(denom>0.02) return {valor:(custoKg*peso)/denom, base:'margem '+fmtN(margemAlvo()*100,0)+'%'};
+    const r=ratiosBaseConfig(); const m=margemAlvoCanal(canal);
+    const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - m;
+    if(denom>0.02) return {valor:(custoKg*peso)/denom, base:'margem '+fmtN(m*100,0)+'% '+(canal==='provedor'?'(prov)':'(dist)')};
   }
   return null;
 }
@@ -1249,7 +1259,7 @@ function renderPropostas(){
     </div>`;
 }
 function novaProposta(){
-  S.propostaEdit={id:null, numero:'', cliente:'', cliente_uf:'', regime:'auto', obs:'', frete:0, redespacho:0,
+  S.propostaEdit={id:null, numero:'', cliente:'', cliente_uf:'', regime:'auto', canal:'distribuidor', obs:'', frete:0, redespacho:0,
     ipiPct:0, parcelas:'1', fidcManual:0, extras:[], itens:[]};
   S.search.propItem=''; renderPropostas();
 }
@@ -1257,6 +1267,7 @@ function abrirProposta(id){
   const p=(S.propostas||[]).find(x=>x.id===id); if(!p) return;
   const r=p.resultado||{};
   S.propostaEdit={id:p.id, numero:p.numero||'', cliente:p.cliente||'', cliente_uf:p.cliente_uf||'', regime:p.regime||'auto',
+    canal:(r.canal||p.canal||'distribuidor'),
     obs:p.obs||'', frete:Number(r.frete)||0, redespacho:Number(r.redespacho)||0, ipiPct:Number(r.ipiPct)||0,
     parcelas:r.parcelas||'1', fidcManual:Number(r.fidcManual)||0,
     extras:Array.isArray(r.extras)?JSON.parse(JSON.stringify(r.extras)):[],
@@ -1283,22 +1294,26 @@ function addItemProposta(pid){
   const pesos=Array.isArray(p.pesos)?p.pesos:[];
   const peso=(pesos.find(x=>normBit(x.bitola)===normBit(bit))||{}).peso ?? '';
   const pr=precoDe(pid,bit);
-  let preco=pr?pr.valor_distribuidor:'';
-  if(!(Number(preco)>0)){ const cf=cargaFidcProposta(); const s=precoSugerido(p.materia_prima, bit, peso, 'distribuidor', cf.carga, cf.fidc); if(s) preco=s.valor; }
+  const canal=(S.propostaEdit.canal||'distribuidor');
+  let preco=pr?(canal==='provedor'?pr.valor_provedor:pr.valor_distribuidor):'';
+  if(!(Number(preco)>0)){ const cf=cargaFidcProposta(); const s=precoSugerido(p.materia_prima, bit, peso, canal, cf.carga, cf.fidc); if(s) preco=s.valor; }
   S.propostaEdit.itens.push({produto_id:pid, codigo:p.codigo, descricao:p.descricao, materia_prima:p.materia_prima,
     bitola:bit, qtd:1, peso:peso, preco:preco});
   renderPropostas();
 }
+function sugestaoItem(it){
+  const cf=cargaFidcProposta();
+  return precoSugerido(it.materia_prima, it.bitola, it.peso, (S.propostaEdit.canal||'distribuidor'), cf.carga, cf.fidc);
+}
 function sugerirPrecoItem(i){
   const it=S.propostaEdit.itens[i]; if(!it) return;
-  const cf=cargaFidcProposta();
-  const s=precoSugerido(it.materia_prima, it.bitola, it.peso, 'distribuidor', cf.carga, cf.fidc);
+  const s=sugestaoItem(it);
   if(s){ it.preco=s.valor; renderPropostas(); toast('Preço sugerido pela '+s.base,'ok'); }
   else toast('Sem base p/ sugerir: cadastre a variável ou o custo de MP','err');
 }
 function sugerirTodosPrecos(){
-  const cf=cargaFidcProposta(); let n=0;
-  (S.propostaEdit.itens||[]).forEach(it=>{ const s=precoSugerido(it.materia_prima,it.bitola,it.peso,'distribuidor',cf.carga,cf.fidc); if(s){ it.preco=s.valor; n++; } });
+  let n=0;
+  (S.propostaEdit.itens||[]).forEach(it=>{ const s=sugestaoItem(it); if(s){ it.preco=s.valor; n++; } });
   renderPropostas(); toast(n?('Preços sugeridos em '+n+' item(ns)'):'Nada a sugerir (falta variável/custo)','ok');
 }
 function removerItemProp(i){ S.propostaEdit.itens.splice(i,1); renderPropostas(); }
@@ -1337,7 +1352,8 @@ function renderPropostaEditor(){
       <td>${bitField}</td>
       <td><input value="${it.qtd??''}" style="width:64px" oninput="propSet(${i},'qtd',this.value)"></td>
       <td><div class="inline-prefix" style="max-width:110px"><input id="it_peso_${i}" value="${it.peso!==''&&it.peso!=null?fmtN(it.peso,3):''}" style="width:92px" onkeyup="maskNum(this,3);propSet(${i},'peso',brNum(this.value))"></div></td>
-      <td><div style="display:flex;gap:4px;align-items:center"><div class="inline-prefix" style="max-width:104px"><span>R$</span><input value="${it.preco!==''&&it.preco!=null?fmtN(it.preco):''}" style="padding-left:30px;width:96px" onkeyup="maskBRL(this);propSet(${i},'preco',brNum(this.value))"></div><button class="btn ghost sm" title="Sugerir preço" style="padding:4px 6px" onclick="sugerirPrecoItem(${i})">💡</button></div></td>
+      <td><div style="display:flex;gap:4px;align-items:center"><div class="inline-prefix" style="max-width:104px"><span>R$</span><input value="${it.preco!==''&&it.preco!=null?fmtN(it.preco):''}" style="padding-left:30px;width:96px" onkeyup="maskBRL(this);propSet(${i},'preco',brNum(this.value))"></div><button class="btn ghost sm" title="Usar preço sugerido" style="padding:4px 6px" onclick="sugerirPrecoItem(${i})">💡</button></div></td>
+      <td class="num" id="it_sug_${i}">—</td>
       <td class="num" id="it_rec_${i}">—</td>
       <td class="num" id="it_luc_${i}">—</td>
       <td class="row-actions"><button class="del" onclick="removerItemProp(${i})">🗑️</button></td>
@@ -1372,6 +1388,12 @@ function renderPropostaEditor(){
             <option value="7" ${prop.regime==='7'?'selected':''}>ICMS 7%</option>
             <option value="simples" ${prop.regime==='simples'?'selected':''}>Simples Nacional</option>
           </select></div>
+        <div class="fld"><label>Canal (define preço sugerido / margem-alvo)</label>
+          <select onchange="S.propostaEdit.canal=this.value;renderPropostas()">
+            <option value="distribuidor" ${(prop.canal||'distribuidor')==='distribuidor'?'selected':''}>Distribuidor</option>
+            <option value="provedor" ${prop.canal==='provedor'?'selected':''}>Provedor</option>
+          </select>
+          <small style="color:var(--muted)">Margem-alvo: <b>${fmtN(margemAlvoCanal(prop.canal||'distribuidor')*100,1)}%</b></small></div>
         <div class="fld"><label>Condição de pagamento</label>
           <select onchange="S.propostaEdit.parcelas=this.value;renderPropostas()">
             ${['1','2','3','4','5','6'].map(n=>`<option value="${n}" ${prop.parcelas===n?'selected':''}>${n}x</option>`).join('')}
@@ -1394,8 +1416,8 @@ function renderPropostaEditor(){
       </div>`:''}
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Produto</th><th>Bitola</th><th>Qtd</th><th>Peso (kg)</th><th>Preço venda un.</th><th class="num">Receita</th><th class="num">Lucro</th><th></th></tr></thead>
-        <tbody>${prop.itens.length?itensHtml:`<tr><td colspan="8"><div class="empty">Nenhum item. Busque um produto acima.</div></td></tr>`}</tbody>
+        <thead><tr><th>Produto</th><th>Bitola</th><th>Qtd</th><th>Peso (kg)</th><th>Preço venda un.</th><th class="num">Sugerido un.</th><th class="num">Receita</th><th class="num">Lucro</th><th></th></tr></thead>
+        <tbody>${prop.itens.length?itensHtml:`<tr><td colspan="9"><div class="empty">Nenhum item. Busque um produto acima.</div></td></tr>`}</tbody>
       </table>
       </div>
     </div>
@@ -1446,6 +1468,7 @@ function recalcProposta(){
   r.itens.forEach((it,i)=>{
     const rc=document.getElementById('it_rec_'+i); if(rc) rc.textContent=fmtBRL(it.receita);
     const lc=document.getElementById('it_luc_'+i); if(lc) lc.innerHTML=`<span style="color:${it.lucro>=0?'var(--verde)':'var(--vermelho)'}">${fmtBRL(it.lucro)} <small style="color:var(--muted)">${fmtN(it.lucroPct,1)}%</small></span>`;
+    const sc=document.getElementById('it_sug_'+i); if(sc){ const s=sugestaoItem(S.propostaEdit.itens[i]); sc.innerHTML = s?`<span style="color:var(--azul)">${fmtBRL(s.valor)}</span> <small style="color:var(--muted)">${esc(s.base)}</small>`:'<small style="color:var(--muted)">—</small>'; }
   });
   const box=document.getElementById('propResultado'); if(box) box.innerHTML=propResultadoHTML(r);
 }
@@ -1459,7 +1482,7 @@ async function salvarProposta(){
     custosExtras:r.custosExtras, frete:Number(prop.frete)||0, redespacho:Number(prop.redespacho)||0,
     ipiPct:Number(prop.ipiPct)||0, ipiVal:r.ipiVal, totalNota:r.totalNota, parcelas:prop.parcelas||'1',
     fidcManual:Number(prop.fidcManual)||0, extras:prop.extras, lucro:r.lucro, lucroPct:r.lucroPct,
-    icmsCod:r.icmsCod, carga:r.ratios.carga};
+    icmsCod:r.icmsCod, carga:r.ratios.carga, canal:prop.canal||'distribuidor'};
   const rec={numero:prop.numero||null, cliente:prop.cliente||null, cliente_uf:prop.cliente_uf||null,
     regime:prop.regime||'auto', obs:prop.obs||null, itens, resultado};
   let error;
@@ -1588,6 +1611,149 @@ async function salvarCadastroRapido(){
 /* ============================================================
    TELA: CONFIGURAÇÕES
    ============================================================ */
+/* ============================================================
+   TELA: IMPORTAR PEDIDO / PROPOSTA (PDF)
+   ============================================================ */
+function normDesc(s){ return String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]+/g,' ').trim(); }
+// SKU = começa com letra e tem pelo menos 2 dígitos (TGLP007, SYMMEO013, TGLF071...)
+const RE_ITEM_PED=/^(.+?)\s+([A-Z][A-Z0-9]*[0-9]{2,}[A-Z0-9]*)\s+([\d.]+,\d{2})\s+([A-Za-z]{1,4})\s+([\d.]+,\d{2,4})\s+([\d.]+,\d{2})$/;
+async function extractPdfText(arrayBuffer){
+  if(!window.pdfjsLib) throw new Error('Leitor de PDF não carregou. Recarregue a página e tente de novo.');
+  const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+  let full='';
+  for(let pn=1; pn<=pdf.numPages; pn++){
+    const page=await pdf.getPage(pn);
+    const tc=await page.getTextContent();
+    const rows={};
+    tc.items.forEach(it=>{
+      const y=Math.round(it.transform[5]);
+      let key=Object.keys(rows).find(k=>Math.abs(Number(k)-y)<=2);
+      if(key==null) key=y;
+      (rows[key]=rows[key]||[]).push({x:it.transform[4], s:it.str});
+    });
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      let line=rows[y].sort((a,b)=>a.x-b.x).map(o=>o.s).join(' ').replace(/\s+/g,' ').trim();
+      // cola números que o PDF quebrou ao redor de . ou , (ex: "1.140 ,00" -> "1.140,00")
+      line=line.replace(/(\d)\s+([.,])/g,'$1$2').replace(/([.,])\s+(\d)/g,'$1$2');
+      if(line) full+=line+'\n';
+    });
+  }
+  return full;
+}
+function parsePedido(txt){
+  const linhas=txt.split('\n');
+  const tipo=/Proposta Comercial/i.test(txt)?'proposta':'pedido';
+  let numero=''; const mN=txt.match(/(?:Pedido de Venda|Proposta Comercial)\s*N[ºo°º]?\s*(\d+)/i); if(mN) numero=mN[1];
+  // UF: CEP seguido de ", UF" (aceita "- Cidade, UF")
+  let cliente_uf=''; const mU=txt.match(/\d{2}\.?\d{3}-?\d{3}[^\n]*?,\s*([A-Z]{2})\b/);
+  if(mU && UFS.includes(mU[1])) cliente_uf=mU[1];
+  // Cliente: 1ª linha não vazia depois do "Nº <numero>" (pula "Para"/"Cliente")
+  let cliente='';
+  const idxN=linhas.findIndex(l=>/(Pedido de Venda|Proposta Comercial)\s*N/i.test(l));
+  if(idxN>=0){ for(let j=idxN+1;j<Math.min(idxN+4,linhas.length);j++){ const l=linhas[j].trim();
+    if(l && !/^(Para|Cliente|Endereço)/i.test(l)){ cliente=l; break; } } }
+  // Itens
+  const itens=[];
+  linhas.forEach(l=>{
+    const m=l.trim().match(RE_ITEM_PED);
+    if(m){
+      const desc=m[1].trim(), sku=m[2], qtd=brNum(m[3]), preco=brNum(m[5]), total=brNum(m[6]);
+      if(qtd>0 && preco>0){ const mt=matchImport(sku,desc); itens.push({sku,desc,qtd,preco,total,match:mt}); }
+    }
+  });
+  return {tipo,numero,cliente,cliente_uf,itens};
+}
+function matchImport(sku,desc){
+  const prods=S.produtos||[];
+  const s=String(sku||'').toUpperCase().trim();
+  let p=prods.find(x=>String(x.codigo||'').toUpperCase().trim()===s);
+  if(p) return {p,via:'código'};
+  const nd=normDesc(desc);
+  if(nd){
+    p=prods.find(x=>normDesc(x.descricao)===nd); if(p) return {p,via:'descrição'};
+    p=prods.find(x=>{const xd=normDesc(x.descricao); return xd&&(xd.includes(nd)||nd.includes(xd));}); if(p) return {p,via:'descrição~'};
+  }
+  return {p:null,via:null};
+}
+async function lerPdfImport(file){
+  if(!file) return;
+  const box=$('#impStatus'); if(box) box.innerHTML='<div class="hint">Lendo PDF…</div>';
+  try{
+    const buf=await file.arrayBuffer();
+    const txt=await extractPdfText(buf);
+    const d=parsePedido(txt);
+    d.arquivo=file.name;
+    S.importData=d;
+    renderImportar();
+    if(!d.itens.length) toast('Nenhum item reconhecido no PDF. Confira se é um pedido/proposta da TGL.','err');
+  }catch(e){ if(box) box.innerHTML='<div class="hint" style="color:var(--vermelho)">Erro ao ler PDF: '+esc(e.message)+'</div>'; }
+}
+function impSetUF(v){ if(S.importData) S.importData.cliente_uf=v; }
+function importarParaMargem(){
+  const d=S.importData; if(!d) return;
+  const itens=d.itens.filter(it=>it.match&&it.match.p).map(it=>{
+    const p=it.match.p; const bit=bitolaPrincipal(p)||'';
+    const pesos=Array.isArray(p.pesos)?p.pesos:[];
+    const peso=(pesos.find(x=>normBit(x.bitola)===normBit(bit))||{}).peso ?? '';
+    return {produto_id:p.id, codigo:p.codigo, descricao:p.descricao, materia_prima:p.materia_prima,
+      bitola:bit, qtd:it.qtd, peso, preco:it.preco};
+  });
+  if(!itens.length){ toast('Nenhum item casado com o cadastro para importar','err'); return; }
+  S.propostaEdit={id:null, numero:d.numero||'', cliente:d.cliente||'', cliente_uf:d.cliente_uf||'', regime:'auto',
+    canal:'distribuidor', obs:'Importado de '+(d.tipo==='proposta'?'proposta':'pedido')+' '+(d.numero||'')+' ('+(d.arquivo||'')+')',
+    frete:0, redespacho:0, ipiPct:0, parcelas:'1', fidcManual:0, extras:[], itens};
+  S.importData=null;
+  toast('Importado — ajuste os preços e veja a margem','ok'); logAcao('import_pedido', d.numero||'');
+  go('propostas');
+}
+function renderImportar(){
+  const d=S.importData;
+  const semProd=!(S.produtos&&S.produtos.length);
+  let preview='';
+  if(d){
+    const casados=d.itens.filter(it=>it.match&&it.match.p).length;
+    const naoCasados=d.itens.length-casados;
+    const badge=(it)=>{ if(!it.match||!it.match.p) return '<span class="tag no">não encontrado</span>';
+      const v=it.match.via; return '<span class="tag ok">'+ (v==='código'?'✓ código':(v==='descrição'?'✓ descrição':'≈ descrição'))+'</span>'; };
+    const rows=d.itens.map(it=>`<tr>
+      <td>${esc(it.desc)}<br><small style="color:var(--muted)">SKU: ${esc(it.sku)}</small></td>
+      <td class="num">${fmtN(it.qtd,0)}</td>
+      <td class="num">${fmtBRL(it.preco)}</td>
+      <td>${badge(it)}${it.match&&it.match.p?`<br><small style="color:var(--muted)">→ ${esc(it.match.p.codigo)} ${esc((it.match.p.descricao||'').slice(0,34))}</small>`:''}</td>
+    </tr>`).join('');
+    preview=`
+      <div class="card">
+        <div class="grid g3">
+          <div class="fld"><label>Tipo</label><input value="${esc(d.tipo==='proposta'?'Proposta Comercial':'Pedido de Venda')}" disabled></div>
+          <div class="fld"><label>Nº</label><input value="${esc(d.numero||'')}" oninput="S.importData.numero=this.value"></div>
+          <div class="fld"><label>Estado do cliente (UF)</label>
+            <select onchange="impSetUF(this.value)"><option value="">— selecione —</option>
+              ${UFS.map(u=>`<option ${d.cliente_uf===u?'selected':''}>${u}</option>`).join('')}</select></div>
+          <div class="fld" style="grid-column:span 3"><label>Cliente</label><input value="${esc(d.cliente||'')}" oninput="S.importData.cliente=this.value"></div>
+        </div>
+        <div class="hint" style="margin:6px 0 10px">${d.itens.length} item(ns) lidos — <b style="color:var(--verde)">${casados} casado(s)</b>${naoCasados?` · <b style="color:var(--vermelho)">${naoCasados} sem cadastro</b> (não entram na margem; cadastre e reimporte, ou ajuste na tela de margem)`:''}.</div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Item do PDF</th><th class="num">Qtd</th><th class="num">Preço un.</th><th>Cadastro</th></tr></thead>
+          <tbody>${rows||`<tr><td colspan="4"><div class="empty">Nenhum item reconhecido.</div></td></tr>`}</tbody>
+        </table></div>
+        <div style="margin-top:14px;display:flex;gap:8px">
+          <button class="btn sm" onclick="importarParaMargem()" ${casados?'':'disabled'}>Abrir na tela de margem →</button>
+          <button class="btn ghost sm" onclick="S.importData=null;renderImportar()">Limpar</button>
+        </div>
+      </div>`;
+  }
+  $('#view').innerHTML=`
+    <div class="page-head"><h2>Importar Pedido / Proposta</h2></div>
+    <div class="card">
+      <p style="margin:0 0 10px;color:var(--muted);font-size:13.5px">Envie um PDF de <b>Pedido de Venda</b> ou <b>Proposta Comercial</b> da TGL. O sistema lê os itens, casa cada um com o cadastro (pelo código; se não achar, pela descrição) e leva tudo para a tela de margem — com peso e custo já preenchidos — para você ajustar os preços e ver a lucratividade.</p>
+      ${semProd?`<div class="hint" style="color:var(--vermelho)">⚠ Cadastro de produtos vazio. Carregue os produtos antes de importar.</div>`:''}
+      <label class="btn sm" style="display:inline-block;cursor:pointer">Escolher PDF…
+        <input type="file" id="pdfImport" accept="application/pdf" style="display:none" onchange="lerPdfImport(this.files[0])"></label>
+      <div id="impStatus" style="margin-top:8px"></div>
+    </div>
+    ${preview}`;
+}
+
 async function renderConfig(){
   const c=S.config||{};
   $('#view').innerHTML=`
@@ -1602,9 +1768,10 @@ async function renderConfig(){
             ${UFS.map(u=>`<option ${c.uf_origem===u?'selected':''}>${u}</option>`).join('')}
           </select></div>
         <div class="fld"><label>ICMS interno (%) — vendas no mesmo estado</label><input id="icmsint" type="number" step="0.01" value="${c.icms_interno??18}"></div>
-        <div class="fld"><label>Margem-alvo (%) — para o preço sugerido</label><input id="margemalvo" type="number" step="0.01" value="${c.margem_alvo_pct??20}"></div>
+        <div class="fld"><label>Margem-alvo Distribuidor (%)</label><input id="margemalvo" type="number" step="0.01" value="${c.margem_alvo_pct??20}"></div>
+        <div class="fld"><label>Margem-alvo Provedor (%)</label><input id="margemalvoprov" type="number" step="0.01" value="${c.margem_alvo_prov_pct??(c.margem_alvo_pct??20)}"></div>
       </div>
-      <p style="margin:8px 0 0;color:var(--muted);font-size:12.5px">A margem-alvo é usada para sugerir o preço quando não há Variável de Precificação cadastrada (preço = custo da MP + demais custos, mirando essa margem de lucro sobre a venda).</p>
+      <p style="margin:8px 0 0;color:var(--muted);font-size:12.5px">As margens-alvo são usadas para sugerir o preço quando não há Variável de Precificação cadastrada (preço = custo da MP + demais custos, mirando essa margem de lucro sobre a venda). Distribuidor e Provedor podem ter lucratividades desejadas diferentes.</p>
       <div style="margin-top:16px"><button class="btn sm" onclick="saveFiscal()">Salvar dados fiscais</button></div>
     </div>
     <div class="card">
@@ -1640,7 +1807,8 @@ async function saveDescontos(){
 }
 async function saveFiscal(){
   const rec={ uf_origem: $('#uforigem').value || null, icms_interno: parseFloat($('#icmsint').value)||0,
-    margem_alvo_pct: parseFloat($('#margemalvo').value)||0 };
+    margem_alvo_pct: parseFloat($('#margemalvo').value)||0,
+    margem_alvo_prov_pct: parseFloat($('#margemalvoprov').value)||0 };
   const {error}=await sb.from('configuracoes').update(rec).eq('id',1);
   if(error){ toast('Erro ao salvar: '+error.message,'err'); return; }
   await loadConfig(); toast('Dados fiscais atualizados','ok'); logAcao('config_fiscal');
