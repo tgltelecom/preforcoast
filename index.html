@@ -1022,19 +1022,21 @@ function ratiosBaseConfig(){
            frVar:  fat>0?(Number(c.custos_variaveis)||0)/fat:0,
            comis:  (Number(c.comissao_pct)||0)/100 };
 }
-// Sugere um preço de venda. 1) Variável (R$/kg × peso) se houver. 2) senão custo MP + margem-alvo.
+// Sugere um preço de venda que ENTREGA a margem-alvo como LUCRO LÍQUIDO (última linha).
+// 1) custo MP + margem-alvo (prioritário). 2) fallback: Variável (R$/kg × peso) quando não há custo de MP cadastrado.
 // canal: 'distribuidor'|'provedor' ; carga=fração impostos ; fidc=fração FIDC. Retorna {valor, base} ou null.
 function precoSugerido(mp, bitola, peso, canal, carga, fidc){
   peso=Number(peso)||0; if(peso<=0) return null;
-  const pv=variaveisPorMateria(mp);
-  const varKg = canal==='provedor' ? (Number(pv.prov)||0) : (Number(pv.dist)||0);
-  if(varKg>0) return {valor:varKg*peso, base:'variável'};
   const custoKg=custoKgMP(mp,bitola);
   if(custoKg!=null){
     const r=ratiosBaseConfig(); const m=margemAlvoCanal(canal);
     const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - m;
     if(denom>0.02) return {valor:(custoKg*peso)/denom, base:'margem '+fmtN(m*100,0)+'% '+(canal==='provedor'?'(prov)':'(dist)')};
   }
+  // fallback: sem custo de MP cadastrado, usa a Variável de Precificação (não garante a margem-alvo)
+  const pv=variaveisPorMateria(mp);
+  const varKg = canal==='provedor' ? (Number(pv.prov)||0) : (Number(pv.dist)||0);
+  if(varKg>0) return {valor:varKg*peso, base:'variável (sem custo MP p/ margem)'};
   return null;
 }
 // ---- Custo de Matéria-Prima ----
