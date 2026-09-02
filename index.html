@@ -694,6 +694,7 @@ function openPrecificar(pid, bitola){
           <option value="12" ${window._precCtx.icms==='12'?'selected':''}>ICMS 12% (carga 21,25%)</option>
           <option value="7"  ${window._precCtx.icms==='7'?'selected':''}>ICMS 7% (carga 16,25%)</option>
           <option value="simples" ${window._precCtx.icms==='simples'?'selected':''}>Simples Nacional (6%)</option>
+          <option value="semnota" ${window._precCtx.icms==='semnota'?'selected':''}>Sem nota (sem impostos)</option>
         </select></div>
     </div>
     <div class="grid" style="margin-top:6px">
@@ -742,7 +743,7 @@ function recalc(){
   if(!$('#p_rp').dataset.touched){ $('#p_rp').value=fmtN(rp); window._precCtx.valEditP=rp; }
   drawBreakdown();
 }
-const TAX={'18':0.2725,'12':0.2125,'7':0.1625,'simples':0.06};
+const TAX={'18':0.2725,'12':0.2125,'7':0.1625,'simples':0.06,'semnota':0};
 function setPrecAba(aba){
   window._precCtx.aba=aba;
   const bn=$('#abaNac'), be=$('#abaExp'), ec=$('#expCtrls');
@@ -855,7 +856,7 @@ function drawBreakdown(){
         ${row('Custos variáveis '+pct(frVar), V*frVar, Vp*frVar)}
         ${row('Antecipação FIDC '+pct(fidcPct), V*fidcPct, Vp*fidcPct)}
         ${row('Comissão '+pct(comisPct), V*comisPct, Vp*comisPct)}
-        ${row('Impostos ('+(icms==='simples'?'Simples 6%':'ICMS '+icms+'%')+') '+pct(taxPct), V*taxPct, Vp*taxPct)}
+        ${row('Impostos ('+(icms==='semnota'?'<span style="color:var(--verde)">sem nota — isento</span>':(icms==='simples'?'Simples 6%':'ICMS '+icms+'%'))+') '+pct(taxPct), V*taxPct, Vp*taxPct)}
         <tr class="tot"><td>Margem restante</td>
           <td class="num" style="color:${clr(sobra)}">${fmtBRL(sobra)}</td>
           <td class="num" style="color:${clr(sobraP)}">${fmtBRL(sobraP)}</td></tr>
@@ -1182,6 +1183,7 @@ function icmsProposta(clienteUF, regime){
 }
 function cargaProposta(cod){
   const c=S.config||{};
+  if(cod==='semnota') return {icms:0, carga:0, tipo:'Sem nota (sem impostos)'};
   if(cod==='simples') return {icms:6, carga:0.06, tipo:'Simples Nacional'};
   const icms = cod==='interno' ? (Number(c.icms_interno)||18) : Number(cod);
   return {icms, carga:(icms+9.25)/100, tipo: cod==='interno' ? 'ICMS interno '+icms+'%' : 'ICMS '+icms+'%'};
@@ -1387,6 +1389,7 @@ function renderPropostaEditor(){
             <option value="12" ${prop.regime==='12'?'selected':''}>ICMS 12%</option>
             <option value="7" ${prop.regime==='7'?'selected':''}>ICMS 7%</option>
             <option value="simples" ${prop.regime==='simples'?'selected':''}>Simples Nacional</option>
+            <option value="semnota" ${prop.regime==='semnota'?'selected':''}>Sem nota (sem impostos)</option>
           </select></div>
         <div class="fld"><label>Canal (define preço sugerido / margem-alvo)</label>
           <select onchange="S.propostaEdit.canal=this.value;renderPropostas()">
