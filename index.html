@@ -1025,12 +1025,13 @@ function ratiosBaseConfig(){
 // Sugere um preço de venda que ENTREGA a margem-alvo como LUCRO LÍQUIDO (última linha).
 // 1) custo MP + margem-alvo (prioritário). 2) fallback: Variável (R$/kg × peso) quando não há custo de MP cadastrado.
 // canal: 'distribuidor'|'provedor' ; carga=fração impostos ; fidc=fração FIDC. Retorna {valor, base} ou null.
-function precoSugerido(mp, bitola, peso, canal, carga, fidc, extraUnit){
+function precoSugerido(mp, bitola, peso, canal, carga, fidc, extraUnit, comisOverride){
   peso=Number(peso)||0; if(peso<=0) return null;
   const custoKg=custoKgMP(mp,bitola);
   if(custoKg!=null){
     const r=ratiosBaseConfig(); const m=margemAlvoCanal(canal);
-    const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - m;
+    const comis = (comisOverride!=null) ? Number(comisOverride)||0 : r.comis;
+    const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+comis+(carga||0)) - m;
     // extraUnit = custo extra por unidade (ex.: rateio do frete CIF), somado ao custo antes de aplicar a margem
     if(denom>0.02) return {valor:((custoKg*peso)+(Number(extraUnit)||0))/denom, base:'margem '+fmtN(m*100,0)+'% '+(canal==='provedor'?'(prov)':'(dist)')+((Number(extraUnit)||0)>0?' + frete':'')};
   }
@@ -1186,6 +1187,7 @@ function icmsProposta(clienteUF, regime){
 }
 function cargaProposta(cod){
   const c=S.config||{};
+  if(cod==='exportacao') return {icms:0, carga:0, tipo:'Exportação (isento de impostos)'};
   if(cod==='semnota') return {icms:0, carga:0, tipo:'Sem nota (sem impostos)'};
   if(cod==='simples') return {icms:6, carga:0.06, tipo:'Simples Nacional'};
   const icms = cod==='interno' ? (Number(c.icms_interno)||18) : Number(cod);
@@ -1205,7 +1207,7 @@ function calcProposta(prop){
   const frFixo=fat>0?(Number(c.custos_fixos)||0)/fat:0;
   const frVar =fat>0?(Number(c.custos_variaveis)||0)/fat:0;
   const fidcPct=fidcParcela(prop.parcelas, prop.fidcManual)/100;
-  const comisPct=(Number(c.comissao_pct)||0)/100;
+  const comisPct=comissaoPropostaFrac(prop);
   const ipiPct=(Number(prop.ipiPct)||0)/100;
   const icmsCod=icmsProposta(prop.cliente_uf, prop.regime);
   const cg=icmsCod?cargaProposta(icmsCod):null;
@@ -1265,7 +1267,7 @@ function renderPropostas(){
 }
 function novaProposta(){
   S.propostaEdit={id:null, numero:'', cliente:'', cliente_uf:'', regime:'auto', canal:'distribuidor', obs:'', frete:0, redespacho:0,
-    ipiPct:0, parcelas:'1', fidcManual:0, extras:[], itens:[]};
+    ipiPct:0, comissaoPct:'', parcelas:'1', fidcManual:0, extras:[], itens:[]};
   S.search.propItem=''; renderPropostas();
 }
 function abrirProposta(id){
@@ -1274,6 +1276,7 @@ function abrirProposta(id){
   S.propostaEdit={id:p.id, numero:p.numero||'', cliente:p.cliente||'', cliente_uf:p.cliente_uf||'', regime:p.regime||'auto',
     canal:(r.canal||p.canal||'distribuidor'),
     obs:p.obs||'', frete:Number(r.frete)||0, redespacho:Number(r.redespacho)||0, ipiPct:Number(r.ipiPct)||0,
+    comissaoPct:(r.comissaoPct!=null?r.comissaoPct:''),
     parcelas:r.parcelas||'1', fidcManual:Number(r.fidcManual)||0,
     extras:Array.isArray(r.extras)?JSON.parse(JSON.stringify(r.extras)):[],
     itens:Array.isArray(p.itens)?JSON.parse(JSON.stringify(p.itens)):[]};
@@ -1306,6 +1309,12 @@ function addItemProposta(pid){
     bitola:bit, qtd:1, peso:peso, preco:preco});
   renderPropostas();
 }
+// Comissão (fração) da proposta: usa o valor editado na proposta; se em branco, cai no padrão da config
+function comissaoPropostaFrac(prop){
+  prop=prop||S.propostaEdit||{}; const c=S.config||{};
+  const v=(prop.comissaoPct!=null && prop.comissaoPct!=='') ? Number(prop.comissaoPct) : (Number(c.comissao_pct)||0);
+  return (Number(v)||0)/100;
+}
 // Soma dos custos extras do pedido (frete CIF + redespacho + extras)
 function custosExtrasProposta(){
   const p=S.propostaEdit||{};
@@ -1322,7 +1331,7 @@ function freteUnitItem(it){
 }
 function sugestaoItem(it){
   const cf=cargaFidcProposta();
-  return precoSugerido(it.materia_prima, it.bitola, it.peso, (S.propostaEdit.canal||'distribuidor'), cf.carga, cf.fidc, freteUnitItem(it));
+  return precoSugerido(it.materia_prima, it.bitola, it.peso, (S.propostaEdit.canal||'distribuidor'), cf.carga, cf.fidc, freteUnitItem(it), comissaoPropostaFrac());
 }
 function sugerirPrecoItem(i){
   const it=S.propostaEdit.itens[i]; if(!it) return;
@@ -1409,6 +1418,7 @@ function renderPropostaEditor(){
             <option value="12" ${prop.regime==='12'?'selected':''}>ICMS 12%</option>
             <option value="7" ${prop.regime==='7'?'selected':''}>ICMS 7%</option>
             <option value="simples" ${prop.regime==='simples'?'selected':''}>Simples Nacional</option>
+            <option value="exportacao" ${prop.regime==='exportacao'?'selected':''}>Exportação (isento de impostos)</option>
             <option value="semnota" ${prop.regime==='semnota'?'selected':''}>Sem nota (sem impostos)</option>
           </select></div>
         <div class="fld"><label>Canal (define preço sugerido / margem-alvo)</label>
@@ -1425,6 +1435,7 @@ function renderPropostaEditor(){
           <small style="color:var(--muted)">FIDC aplicado: <b>${fmtN(fidcParcela(prop.parcelas,prop.fidcManual),2)}%</b></small></div>
         ${prop.parcelas==='manual'?`<div class="fld"><label>FIDC manual (%)</label><input value="${prop.fidcManual?fmtN(prop.fidcManual):''}" placeholder="0,00" onkeyup="maskNum(this,2);S.propostaEdit.fidcManual=brNum(this.value);recalcProposta()"></div>`:''}
         <div class="fld"><label>IPI (%)</label><input value="${prop.ipiPct?fmtN(prop.ipiPct):''}" placeholder="0,00" onkeyup="maskNum(this,2);S.propostaEdit.ipiPct=brNum(this.value);recalcProposta()"></div>
+        <div class="fld"><label>Comissão (%) <small style="color:var(--muted)">— padrão ${fmtN(Number((S.config||{}).comissao_pct)||0)}%</small></label><input value="${(prop.comissaoPct!=null&&prop.comissaoPct!=='')?fmtN(prop.comissaoPct):''}" placeholder="${fmtN(Number((S.config||{}).comissao_pct)||0)}" onkeyup="maskNum(this,2);S.propostaEdit.comissaoPct=(this.value.trim()===''?'':brNum(this.value));marcarRecalcPend()"></div>
         <div class="fld" style="grid-column:span ${prop.parcelas==='manual'?'3':'3'}"><label>Observações</label><input value="${esc(prop.obs||'')}" oninput="S.propostaEdit.obs=this.value"></div>
       </div>
     </div>
@@ -1508,7 +1519,8 @@ async function salvarProposta(){
     custosExtras:r.custosExtras, frete:Number(prop.frete)||0, redespacho:Number(prop.redespacho)||0,
     ipiPct:Number(prop.ipiPct)||0, ipiVal:r.ipiVal, totalNota:r.totalNota, parcelas:prop.parcelas||'1',
     fidcManual:Number(prop.fidcManual)||0, extras:prop.extras, lucro:r.lucro, lucroPct:r.lucroPct,
-    icmsCod:r.icmsCod, carga:r.ratios.carga, canal:prop.canal||'distribuidor'};
+    icmsCod:r.icmsCod, carga:r.ratios.carga, canal:prop.canal||'distribuidor',
+    comissaoPct:(prop.comissaoPct!=null&&prop.comissaoPct!=='')?Number(prop.comissaoPct):null, comisPctUsada:r.ratios.comisPct};
   const rec={numero:prop.numero||null, cliente:prop.cliente||null, cliente_uf:prop.cliente_uf||null,
     regime:prop.regime||'auto', obs:prop.obs||null, itens, resultado};
   let error;
