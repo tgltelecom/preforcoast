@@ -102,6 +102,7 @@
   /* forms */
   .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
   .grid.g3{grid-template-columns:repeat(3,1fr)}
+  .grid.g4{grid-template-columns:repeat(4,1fr)}
   .fld{display:flex;flex-direction:column;gap:5px}
   .fld label{font-size:12px;font-weight:600;color:var(--muted)}
   .fld .req{color:var(--vermelho)}
@@ -153,7 +154,7 @@
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.err{background:var(--vermelho)} .toast.ok{background:var(--verde)}
   .hint{font-size:12px;color:var(--muted);margin-top:4px}
-  @media(max-width:720px){.grid,.grid.g3{grid-template-columns:1fr}nav.menu{overflow:auto}}
+  @media(max-width:720px){.grid,.grid.g3,.grid.g4{grid-template-columns:1fr}nav.menu{overflow:auto}}
 </style>
 </head>
 <body>
@@ -619,11 +620,13 @@ function renderFormacao(){
       <button class="${S.formSub==='custos'?'active':''}" onclick="S.formSub='custos';renderFormacao()">Custos Fixos e Variáveis</button>
       <button class="${S.formSub==='variaveis'?'active':''}" onclick="S.formSub='variaveis';renderFormacao()">Variáveis de Precificação</button>
       <button class="${S.formSub==='mp'?'active':''}" onclick="S.formSub='mp';renderFormacao()">Custo de Matéria-Prima</button>
+      <button class="${S.formSub==='inteligente'?'active':''}" onclick="S.formSub='inteligente';renderFormacao()">✨ Precificação Inteligente</button>
     </div>
     <div id="subview"></div>`;
   if(S.formSub==='precificar') subPrecificar();
   else if(S.formSub==='custos') subCustos();
   else if(S.formSub==='variaveis') subVariaveis();
+  else if(S.formSub==='inteligente') subPrecInteligente();
   else subCustoMP();
 }
 
@@ -888,6 +891,170 @@ async function savePrecificacao(pid){
   toast('Precificação salva','ok'); logAcao('precificar',p.descricao+(bit?' · '+bit:''));
 }
 
+/* ---- Sub-aba: Precificação Inteligente (em massa) ---- */
+function piInit(){
+  const c=S.config||{};
+  if(!window._pi) window._pi={
+    md: Number(c.margem_alvo_pct)||20,
+    mp: Number(c.margem_alvo_prov_pct)||Number(c.margem_alvo_pct)||20,
+    regime:'18', step:0, rows:null, sel:null, q:''
+  };
+}
+// custo unitário e preço sugerido de um produto+bitola, com a margem/regime/arredondamento do run
+function piCalcRow(prod, bitola, peso){
+  const c=S.config||{};
+  const carga=TAX[window._pi.regime]||0;
+  const fidc=(Number(c.custo_fidc_pct)||0)/100;
+  const custoKg=custoKgMP(prod.materia_prima, bitola);
+  if(custoKg==null) return null;                 // sem custo de MP → fora
+  const custoMP=custoKg*peso;
+  const sd=precoSugerido(prod.materia_prima,bitola,peso,'distribuidor',carga,fidc,0,null,window._pi.md/100);
+  const sp=precoSugerido(prod.materia_prima,bitola,peso,'provedor',carga,fidc,0,null,window._pi.mp/100);
+  if(!sd||!sp) return null;
+  let vd=sd.valor, vp=sp.valor;
+  const step=Number(window._pi.step)||0;
+  if(step>0){ vd=Math.ceil(vd/step-1e-9)*step; vp=Math.ceil(vp/step-1e-9)*step; }  // arredonda p/ cima
+  // margem resultante = lucro líquido / venda, já com o preço (arredondado)
+  const r=ratiosBaseConfig();
+  const base=1-(r.frFixo+r.frVar+fidc+r.comis+carga);
+  const mgd=vd>0?(base - custoMP/vd)*100:0;
+  const mgp=vp>0?(base - custoMP/vp)*100:0;
+  return {custoKg,custoMP,vd,vp,mgd,mgp};
+}
+function piGerar(){
+  piInit();
+  window._pi.md=parseFloat($('#pi_md').value)||0;
+  window._pi.mp=parseFloat($('#pi_mp').value)||0;
+  window._pi.regime=$('#pi_regime').value;
+  window._pi.step=Number($('#pi_step').value)||0;
+  const rows=[];
+  (S.produtos||[]).forEach(prod=>{
+    const bits=Array.isArray(prod.pesos)?prod.pesos:[];
+    bits.forEach(b=>{
+      const peso=Number(b.peso)||0; if(peso<=0) return;
+      const calc=piCalcRow(prod, b.bitola||'', peso);
+      if(!calc) return;
+      const atual=precoDe(prod.id, b.bitola||'');
+      rows.push({pid:prod.id, codigo:prod.codigo, descricao:prod.descricao, mp:prod.materia_prima,
+        bitola:b.bitola||'', peso, custoMP:calc.custoMP, vd:calc.vd, vp:calc.vp, mgd:calc.mgd, mgp:calc.mgp,
+        atualD:atual?atual.valor_distribuidor:null, atualP:atual?atual.valor_provedor:null,
+        novo:!atual});
+    });
+  });
+  rows.sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))||String(a.bitola).localeCompare(String(b.bitola)));
+  window._pi.rows=rows;
+  window._pi.sel=new Set(rows.map((_,i)=>i));   // tudo marcado por padrão
+  renderFormacao();
+}
+function piMarcarTodos(v){ const pi=window._pi; if(!pi||!pi.rows) return; pi.sel = v? new Set(pi.rows.map((_,i)=>i)) : new Set(); renderFormacao(); }
+function piTog(i, el){ const s=window._pi.sel; if(el.checked) s.add(i); else s.delete(i); const c=$('#pi_count'); if(c) c.textContent=s.size; }
+async function piAplicar(){
+  const pi=window._pi;
+  if(!pi||!pi.rows){ toast('Gere a prévia primeiro','err'); return; }
+  const idxs=[...pi.sel]; if(!idxs.length){ toast('Nenhuma linha selecionada','err'); return; }
+  const recs=idxs.map(i=>{
+    const r=pi.rows[i]; const ex=precoDe(r.pid,r.bitola); const padrao=variaveisPorMateria(r.mp);
+    return { produto_id:r.pid, bitola:r.bitola, peso:r.peso,
+      variavel_distribuidor: ex?ex.variavel_distribuidor:(padrao.dist||0),
+      variavel_provedor: ex?ex.variavel_provedor:(padrao.prov||0),
+      valor_distribuidor:r.vd, valor_provedor:r.vp,
+      icms_flag:pi.regime, updated_by:(S.user&&S.user.email)||null };
+  });
+  const btn=$('#pi_apply'); if(btn){ btn.disabled=true; btn.textContent='Aplicando...'; }
+  const CH=500; let done=0;
+  for(let k=0;k<recs.length;k+=CH){
+    const {error}=await sb.from('precificacoes').upsert(recs.slice(k,k+CH),{onConflict:'produto_id,bitola'});
+    if(error){ toast('Erro ao aplicar: '+error.message,'err'); if(btn){btn.disabled=false;btn.textContent='Aplicar selecionados';} return; }
+    done+=Math.min(CH,recs.length-k);
+    if(btn) btn.textContent='Aplicando... '+done+'/'+recs.length;
+  }
+  await loadPrecos();
+  toast(done+' produtos precificados','ok'); logAcao('precificacao_inteligente', done+' linhas · margem '+fmtN(pi.md,1)+'/'+fmtN(pi.mp,1)+'%');
+  window._pi.rows=null; window._pi.sel=null; renderFormacao();
+}
+function subPrecInteligente(){
+  piInit();
+  const pi=window._pi;
+  const hasMP=(S.mpcustos||[]).length;
+  const ctrl=`
+   <div class="card">
+     <div class="grid g4">
+       <div class="fld"><label>Margem-alvo Distribuidor (%)</label><input id="pi_md" type="number" step="0.01" value="${pi.md}"></div>
+       <div class="fld"><label>Margem-alvo Provedor (%)</label><input id="pi_mp" type="number" step="0.01" value="${pi.mp}"></div>
+       <div class="fld"><label>Regime base da tabela</label>
+         <select id="pi_regime">
+           <option value="18" ${pi.regime==='18'?'selected':''}>ICMS 18% (carga 27,25%)</option>
+           <option value="12" ${pi.regime==='12'?'selected':''}>ICMS 12% (21,25%)</option>
+           <option value="7" ${pi.regime==='7'?'selected':''}>ICMS 7% (16,25%)</option>
+           <option value="simples" ${pi.regime==='simples'?'selected':''}>Simples (6%)</option>
+           <option value="semnota" ${pi.regime==='semnota'?'selected':''}>Sem nota (isento)</option>
+         </select></div>
+       <div class="fld"><label>Arredondamento comercial</label>
+         <select id="pi_step">
+           <option value="0" ${pi.step==0?'selected':''}>Nenhum (centavo exato)</option>
+           <option value="0.05" ${pi.step==0.05?'selected':''}>R$ 0,05</option>
+           <option value="0.1" ${pi.step==0.1?'selected':''}>R$ 0,10</option>
+           <option value="0.5" ${pi.step==0.5?'selected':''}>R$ 0,50</option>
+           <option value="1" ${pi.step==1?'selected':''}>R$ 1,00</option>
+         </select></div>
+     </div>
+     <div class="hint">Só entram os produtos que têm <b>custo de matéria-prima cadastrado</b> para a bitola. O preço sugerido entrega a margem-alvo como <b>lucro líquido</b> (última linha do demonstrativo). O arredondamento é sempre <b>para cima</b>, então a margem nunca fica abaixo do alvo. O regime define os impostos embutidos no preço-base da Tabela (o padrão é ICMS 18% / valor cheio; os descontos por cliente entram por cima).</div>
+     <div style="margin-top:10px"><button onclick="piGerar()">⚙️ Gerar prévia de preços</button></div>
+   </div>`;
+  if(!hasMP){
+    $('#subview').innerHTML=ctrl+`<div class="card"><div class="empty">Nenhum custo de matéria-prima cadastrado ainda. Cadastre em <b>Custo de Matéria-Prima</b> para o sistema conseguir precificar.</div></div>`;
+    return;
+  }
+  if(!pi.rows){
+    $('#subview').innerHTML=ctrl+`<div class="card"><div class="empty">Ajuste os parâmetros acima e clique em <b>Gerar prévia de preços</b>. O sistema vai calcular o preço de todos os produtos com custo de MP cadastrado.</div></div>`;
+    return;
+  }
+  const q=(pi.q||'').toLowerCase();
+  const idxAll=pi.rows.map((_,i)=>i);
+  const idxFilt=q? idxAll.filter(i=>{const r=pi.rows[i]; return (r.codigo+' '+r.descricao+' '+r.bitola).toLowerCase().includes(q);}) : idxAll;
+  const LIM=400; const idxShow=idxFilt.slice(0,LIM);
+  const nProd=new Set(pi.rows.map(r=>r.pid)).size;
+  const clr=x=>x>=0?'var(--verde)':'var(--vermelho)';
+  const arrow=(atual,novo)=>{ if(atual==null) return '<span class="tag no" style="font-size:10px">novo</span>'; const d=novo-atual; if(Math.abs(d)<0.005) return '<span style="color:var(--muted)">=</span>'; return `<small style="color:${d>0?'var(--verde)':'var(--vermelho)'}">${d>0?'▲':'▼'} ${fmtBRL(Math.abs(d))}</small>`; };
+  const body=idxShow.map(i=>{ const r=pi.rows[i]; const on=pi.sel.has(i);
+    return `<tr>
+      <td style="text-align:center"><input type="checkbox" ${on?'checked':''} onchange="piTog(${i},this)"></td>
+      <td><b>${esc(r.codigo)}</b></td>
+      <td>${esc(r.descricao)}</td>
+      <td>${esc(r.bitola||'—')}</td>
+      <td class="num">${fmtN(r.peso,3)}</td>
+      <td class="num">${fmtBRL(r.custoMP)}</td>
+      <td class="num">${r.atualD!=null?fmtBRL(r.atualD):'—'}</td>
+      <td class="num"><b>${fmtBRL(r.vd)}</b><br>${arrow(r.atualD,r.vd)}</td>
+      <td class="num" style="color:${clr(r.mgd)}">${fmtN(r.mgd,1)}%</td>
+      <td class="num"><b>${fmtBRL(r.vp)}</b><br>${arrow(r.atualP,r.vp)}</td>
+      <td class="num" style="color:${clr(r.mgp)}">${fmtN(r.mgp,1)}%</td></tr>`;
+  }).join('');
+  $('#subview').innerHTML=ctrl+`
+    <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div><b>${pi.rows.length}</b> linhas calculadas · <b>${nProd}</b> produtos · <b id="pi_count">${pi.sel.size}</b> selecionadas</div>
+      <div class="spacer" style="flex:1"></div>
+      <button class="ghost" onclick="piMarcarTodos(true)">Marcar todos</button>
+      <button class="ghost" onclick="piMarcarTodos(false)">Desmarcar todos</button>
+      <button id="pi_apply" onclick="piAplicar()">✅ Aplicar selecionados</button>
+    </div>
+    <div class="page-head" style="margin-top:8px">
+      <div class="search"><span class="ic">🔍</span>
+        <input id="searchBox_pi" placeholder="Filtrar produto/bitola..." value="${esc(pi.q||'')}"
+          oninput="window._pi.q=this.value; clearTimeout(window._piT); window._piT=setTimeout(subPrecInteligente,250)"></div>
+      <div class="spacer"></div>
+      <div class="hint" style="margin:0">${idxFilt.length>LIM?('Mostrando '+LIM+' de '+idxFilt.length+' — use o filtro para refinar. A seleção e o "Aplicar" valem para TODAS.'):''}</div>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th style="width:34px"></th><th>Código</th><th>Descrição</th><th>Bitola</th><th class="num">Peso</th>
+          <th class="num">Custo MP</th><th class="num">Atual Dist.</th><th class="num">Sugerido Dist.</th><th class="num">Margem</th>
+          <th class="num">Sugerido Prov.</th><th class="num">Margem</th></tr></thead>
+        <tbody>${body||`<tr><td colspan="11"><div class="empty">Nenhuma linha para o filtro.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
 /* ---- Sub-aba: Custos Fixos e Variáveis ---- */
 function defaultCustosFixos(){ return [
   'Aluguel','Água','Energia (luz)','Telefone / Internet','Funcionários (salários + encargos)',
@@ -1025,11 +1192,12 @@ function ratiosBaseConfig(){
 // Sugere um preço de venda que ENTREGA a margem-alvo como LUCRO LÍQUIDO (última linha).
 // 1) custo MP + margem-alvo (prioritário). 2) fallback: Variável (R$/kg × peso) quando não há custo de MP cadastrado.
 // canal: 'distribuidor'|'provedor' ; carga=fração impostos ; fidc=fração FIDC. Retorna {valor, base} ou null.
-function precoSugerido(mp, bitola, peso, canal, carga, fidc, extraUnit, comisOverride){
+function precoSugerido(mp, bitola, peso, canal, carga, fidc, extraUnit, comisOverride, margemOverride){
   peso=Number(peso)||0; if(peso<=0) return null;
   const custoKg=custoKgMP(mp,bitola);
   if(custoKg!=null){
-    const r=ratiosBaseConfig(); const m=margemAlvoCanal(canal);
+    const r=ratiosBaseConfig();
+    const m=(margemOverride!=null && !isNaN(margemOverride)) ? Number(margemOverride) : margemAlvoCanal(canal);
     const comis = (comisOverride!=null) ? Number(comisOverride)||0 : r.comis;
     const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+comis+(carga||0)) - m;
     // extraUnit = custo extra por unidade (ex.: rateio do frete CIF), somado ao custo antes de aplicar a margem
