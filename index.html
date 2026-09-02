@@ -1025,13 +1025,14 @@ function ratiosBaseConfig(){
 // Sugere um preço de venda que ENTREGA a margem-alvo como LUCRO LÍQUIDO (última linha).
 // 1) custo MP + margem-alvo (prioritário). 2) fallback: Variável (R$/kg × peso) quando não há custo de MP cadastrado.
 // canal: 'distribuidor'|'provedor' ; carga=fração impostos ; fidc=fração FIDC. Retorna {valor, base} ou null.
-function precoSugerido(mp, bitola, peso, canal, carga, fidc){
+function precoSugerido(mp, bitola, peso, canal, carga, fidc, extraUnit){
   peso=Number(peso)||0; if(peso<=0) return null;
   const custoKg=custoKgMP(mp,bitola);
   if(custoKg!=null){
     const r=ratiosBaseConfig(); const m=margemAlvoCanal(canal);
     const denom = 1 - (r.frFixo+r.frVar+(fidc||0)+r.comis+(carga||0)) - m;
-    if(denom>0.02) return {valor:(custoKg*peso)/denom, base:'margem '+fmtN(m*100,0)+'% '+(canal==='provedor'?'(prov)':'(dist)')};
+    // extraUnit = custo extra por unidade (ex.: rateio do frete CIF), somado ao custo antes de aplicar a margem
+    if(denom>0.02) return {valor:((custoKg*peso)+(Number(extraUnit)||0))/denom, base:'margem '+fmtN(m*100,0)+'% '+(canal==='provedor'?'(prov)':'(dist)')+((Number(extraUnit)||0)>0?' + frete':'')};
   }
   // fallback: sem custo de MP cadastrado, usa a Variável de Precificação (não garante a margem-alvo)
   const pv=variaveisPorMateria(mp);
@@ -1305,9 +1306,23 @@ function addItemProposta(pid){
     bitola:bit, qtd:1, peso:peso, preco:preco});
   renderPropostas();
 }
+// Soma dos custos extras do pedido (frete CIF + redespacho + extras)
+function custosExtrasProposta(){
+  const p=S.propostaEdit||{};
+  return (Number(p.frete)||0)+(Number(p.redespacho)||0)+((p.extras||[]).reduce((s,e)=>s+(Number(e.valor)||0),0));
+}
+// Rateio do frete/custos extras por UNIDADE do item (proporcional ao peso; se sem peso, por quantidade)
+function freteUnitItem(it){
+  const ce=custosExtrasProposta(); if(ce<=0) return 0;
+  const itens=(S.propostaEdit&&S.propostaEdit.itens)||[];
+  let totPeso=0, totQtd=0;
+  itens.forEach(x=>{ totPeso+=(Number(x.peso)||0)*(Number(x.qtd)||0); totQtd+=(Number(x.qtd)||0); });
+  if(totPeso>0) return ce*(Number(it.peso)||0)/totPeso;   // por unidade (rateio por peso)
+  return totQtd>0 ? ce/totQtd : 0;                         // fallback: por quantidade
+}
 function sugestaoItem(it){
   const cf=cargaFidcProposta();
-  return precoSugerido(it.materia_prima, it.bitola, it.peso, (S.propostaEdit.canal||'distribuidor'), cf.carga, cf.fidc);
+  return precoSugerido(it.materia_prima, it.bitola, it.peso, (S.propostaEdit.canal||'distribuidor'), cf.carga, cf.fidc, freteUnitItem(it));
 }
 function sugerirPrecoItem(i){
   const it=S.propostaEdit.itens[i]; if(!it) return;
@@ -1318,8 +1333,11 @@ function sugerirPrecoItem(i){
 function sugerirTodosPrecos(){
   let n=0;
   (S.propostaEdit.itens||[]).forEach(it=>{ const s=sugestaoItem(it); if(s){ it.preco=s.valor; n++; } });
-  renderPropostas(); toast(n?('Preços sugeridos em '+n+' item(ns)'):'Nada a sugerir (falta variável/custo)','ok');
+  if(S.propostaEdit) S.propostaEdit._recalcPend=false;   // preços já refletem o frete atual
+  renderPropostas(); toast(n?('Preços sugeridos em '+n+' item(ns)'+(custosExtrasProposta()>0?' (com frete rateado)':'')):'Nada a sugerir (falta variável/custo)','ok');
 }
+// marca que o frete/custos mudaram e os preços precisam ser re-sugeridos
+function marcarRecalcPend(){ if(S.propostaEdit){ S.propostaEdit._recalcPend=true; } recalcProposta(); }
 function removerItemProp(i){ S.propostaEdit.itens.splice(i,1); renderPropostas(); }
 function addExtraProp(){ S.propostaEdit.extras.push({nome:'',valor:''}); renderPropostas(); }
 function removerExtraProp(i){ S.propostaEdit.extras.splice(i,1); renderPropostas(); }
@@ -1366,7 +1384,7 @@ function renderPropostaEditor(){
   const extrasHtml=prop.extras.map((e,i)=>`
     <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
       <input value="${esc(e.nome||'')}" placeholder="Descrição do custo (ex: Seguro)" style="flex:1" oninput="S.propostaEdit.extras[${i}].nome=this.value">
-      <div class="inline-prefix" style="max-width:140px"><span>R$</span><input value="${e.valor!==''&&e.valor!=null?fmtN(e.valor):''}" style="padding-left:30px;width:120px" onkeyup="maskBRL(this);S.propostaEdit.extras[${i}].valor=brNum(this.value);recalcProposta()"></div>
+      <div class="inline-prefix" style="max-width:140px"><span>R$</span><input value="${e.valor!==''&&e.valor!=null?fmtN(e.valor):''}" style="padding-left:30px;width:120px" onkeyup="maskBRL(this);S.propostaEdit.extras[${i}].valor=brNum(this.value);marcarRecalcPend()"></div>
       <button class="del" onclick="removerExtraProp(${i})">🗑️</button>
     </div>`).join('');
   $('#view').innerHTML=`
@@ -1412,7 +1430,9 @@ function renderPropostaEditor(){
     </div>
 
     <div class="card">
-      <div style="display:flex;align-items:center;margin:0 0 8px"><h3 style="margin:0">Itens do pedido</h3><div style="flex:1"></div><button class="btn ghost sm" onclick="sugerirTodosPrecos()">💡 Sugerir preços</button></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px"><h3 style="margin:0">Itens do pedido</h3><div style="flex:1"></div>
+        <span id="freteAlerta" ${(prop._recalcPend&&custosExtrasProposta()>0)?'':'hidden'} style="background:#fff3cd;border:1px solid #ffe08a;color:#8a6d00;padding:5px 10px;border-radius:6px;font-size:12px">⚠ Frete/custos alterados — clique em <b>💡 Sugerir preços</b> para recalcular mantendo a margem</span>
+        <button class="btn ghost sm" onclick="sugerirTodosPrecos()">💡 Sugerir preços</button></div>
       <div class="search" style="margin-bottom:10px"><span class="ic">🔍</span>
         <input id="searchBox_propItem" placeholder="Buscar produto para adicionar..." value="${esc(S.search.propItem||'')}" oninput="onSearch(this,'propItem',renderPropostas)" style="width:340px"></div>
       ${q?`<div class="card" style="padding:6px;margin-bottom:10px">
@@ -1430,8 +1450,8 @@ function renderPropostaEditor(){
     <div class="card">
       <h3 style="margin:0 0 8px">Custos adicionais do pedido</h3>
       <div class="grid g3" style="margin-bottom:8px">
-        <div class="fld"><label>Frete (CIF)</label><div class="inline-prefix"><span>R$</span><input value="${prop.frete?fmtN(prop.frete):''}" placeholder="0,00" onkeyup="maskBRL(this);S.propostaEdit.frete=brNum(this.value);recalcProposta()"></div></div>
-        <div class="fld"><label>Redespacho</label><div class="inline-prefix"><span>R$</span><input value="${prop.redespacho?fmtN(prop.redespacho):''}" placeholder="0,00" onkeyup="maskBRL(this);S.propostaEdit.redespacho=brNum(this.value);recalcProposta()"></div></div>
+        <div class="fld"><label>Frete (CIF)</label><div class="inline-prefix"><span>R$</span><input value="${prop.frete?fmtN(prop.frete):''}" placeholder="0,00" onkeyup="maskBRL(this);S.propostaEdit.frete=brNum(this.value);marcarRecalcPend()"></div></div>
+        <div class="fld"><label>Redespacho</label><div class="inline-prefix"><span>R$</span><input value="${prop.redespacho?fmtN(prop.redespacho):''}" placeholder="0,00" onkeyup="maskBRL(this);S.propostaEdit.redespacho=brNum(this.value);marcarRecalcPend()"></div></div>
       </div>
       ${extrasHtml}
       <button class="btn ghost sm" onclick="addExtraProp()">+ Adicionar custo</button>
@@ -1476,6 +1496,7 @@ function recalcProposta(){
     const sc=document.getElementById('it_sug_'+i); if(sc){ const s=sugestaoItem(S.propostaEdit.itens[i]); sc.innerHTML = s?`<span style="color:var(--azul)">${fmtBRL(s.valor)}</span> <small style="color:var(--muted)">${esc(s.base)}</small>`:'<small style="color:var(--muted)">—</small>'; }
   });
   const box=document.getElementById('propResultado'); if(box) box.innerHTML=propResultadoHTML(r);
+  const al=document.getElementById('freteAlerta'); if(al) al.hidden = !(prop._recalcPend && custosExtrasProposta()>0);
 }
 async function salvarProposta(){
   const prop=S.propostaEdit; if(!prop) return;
