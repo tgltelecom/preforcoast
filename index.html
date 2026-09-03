@@ -859,7 +859,7 @@ function drawBreakdown(){
         ${row('Custos variáveis '+pct(frVar), V*frVar, Vp*frVar)}
         ${row('Antecipação FIDC '+pct(fidcPct), V*fidcPct, Vp*fidcPct)}
         ${row('Comissão '+pct(comisPct), V*comisPct, Vp*comisPct)}
-        ${row('Impostos ('+(icms==='semnota'?'<span style="color:var(--verde)">sem nota — isento</span>':(icms==='simples'?'Simples 6%':'ICMS '+icms+'%'))+') '+pct(taxPct), V*taxPct, Vp*taxPct)}
+        ${linhasImposto(Number(icms)||0, taxPct, icms==='semnota'?'isento':(icms==='simples'?'simples':'icms'), '<span style="color:var(--verde)">Impostos (sem nota — isento)</span>').map(l=>row(l.lbl+(l.f>0?' '+pct(l.f):''), V*l.f, Vp*l.f)).join('')}
         <tr class="tot"><td>Margem restante</td>
           <td class="num" style="color:${clr(sobra)}">${fmtBRL(sobra)}</td>
           <td class="num" style="color:${clr(sobraP)}">${fmtBRL(sobraP)}</td></tr>
@@ -1361,6 +1361,15 @@ function cargaProposta(cod){
   const icms = cod==='interno' ? (Number(c.icms_interno)||18) : Number(cod);
   return {icms, carga:(icms+9.25)/100, tipo: cod==='interno' ? 'ICMS interno '+icms+'%' : 'ICMS '+icms+'%'};
 }
+// Separa a carga tributária em linhas de ICMS e PIS/COFINS para os demonstrativos (só exibição — a carga total não muda).
+// icms = alíquota ICMS (%); carga = fração total; tipo: 'icms' | 'simples' | 'isento'
+function linhasImposto(icms, carga, tipo, isentoLbl){
+  if(tipo==='isento' || !carga) return [{lbl:(isentoLbl||'Impostos (isento)'), f:0}];
+  if(tipo==='simples') return [{lbl:'Simples Nacional', f:carga}];
+  const icmsF=(Number(icms)||0)/100;
+  const picoF=Math.max(0, carga - icmsF);   // PIS/COFINS = carga − ICMS (≈ 9,25%)
+  return [{lbl:'ICMS', f:icmsF}, {lbl:'PIS/COFINS', f:picoF}];
+}
 // FIDC conforme condição de pagamento (parcelas): 1-4x=4,5% ; 5x=5,10% ; 6x=5,5% ; acima=manual
 function fidcParcela(parcelas, manual){
   const p=String(parcelas||'1');
@@ -1656,7 +1665,7 @@ function propResultadoHTML(r){
         <tr><td>Custos variáveis ${pct(r.ratios.frVar)}</td><td class="num">${fmtBRL(r.varc)}</td></tr>
         <tr><td>Antecipação FIDC ${pct(r.ratios.fidcPct)}</td><td class="num">${fmtBRL(r.fidc)}</td></tr>
         <tr><td>Comissão ${pct(r.ratios.comisPct)}</td><td class="num">${fmtBRL(r.comis)}</td></tr>
-        <tr><td>Impostos ${pct(r.ratios.carga)}</td><td class="num">${fmtBRL(r.imp)}</td></tr>
+        ${linhasImposto(cg?cg.icms:0, r.ratios.carga, (!cg||!r.ratios.carga)?'isento':(String(cg.tipo).startsWith('Simples')?'simples':'icms')).map(l=>`<tr><td>${l.lbl}${l.f>0?' '+pct(l.f):''}</td><td class="num">${fmtBRL(r.recTot*l.f)}</td></tr>`).join('')}
         <tr><td>Custo da matéria-prima</td><td class="num">${fmtBRL(r.mpTot)}</td></tr>
         <tr><td>Frete (CIF) + redespacho + extras</td><td class="num">${fmtBRL(r.custosExtras)}</td></tr>
         <tr class="tot"><td>Lucro do pedido</td><td class="num" style="color:${clr(r.lucro)}">${fmtBRL(r.lucro)} <small style="color:var(--muted)">(${fmtN(r.lucroPct,1)}% sobre a venda)</small></td></tr>
@@ -1734,7 +1743,7 @@ function imprimirProposta(){
       <tr><td>Custos variáveis (${pctL(r.ratios.frVar)})</td><td class="r">${fmtBRL(r.varc)}</td></tr>
       <tr><td>FIDC (${pctL(r.ratios.fidcPct)})</td><td class="r">${fmtBRL(r.fidc)}</td></tr>
       <tr><td>Comissão (${pctL(r.ratios.comisPct)})</td><td class="r">${fmtBRL(r.comis)}</td></tr>
-      <tr><td>Impostos (${pctL(r.ratios.carga)})</td><td class="r">${fmtBRL(r.imp)}</td></tr>
+      ${linhasImposto(cg?cg.icms:0, r.ratios.carga, (!cg||!r.ratios.carga)?'isento':(String(cg.tipo).startsWith('Simples')?'simples':'icms')).map(l=>`<tr><td>${l.lbl}${l.f>0?' ('+pctL(l.f)+')':''}</td><td class="r">${fmtBRL(r.recTot*l.f)}</td></tr>`).join('')}
       <tr><td>Custo matéria-prima</td><td class="r">${fmtBRL(r.mpTot)}</td></tr>
       <tr><td>Frete + redespacho + extras</td><td class="r">${fmtBRL(r.custosExtras)}</td></tr>
       <tr><td class="l">Lucro do pedido</td><td class="r l" style="color:${clr(r.lucro)}">${fmtBRL(r.lucro)} (${fmtN(r.lucroPct,1)}%)</td></tr>
